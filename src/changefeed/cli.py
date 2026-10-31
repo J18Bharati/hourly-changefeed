@@ -10,7 +10,7 @@ from pathlib import Path
 
 import psycopg
 
-from changefeed import collect, db, emit, load, ops, registry, versions
+from changefeed import collect, db, emit, load, ops, registry, reports, versions
 from changefeed.adapters import ADAPTERS
 
 
@@ -24,6 +24,7 @@ def _parser() -> argparse.ArgumentParser:
     em.add_argument("--out", type=Path, default=Path.home() / ".local/share/hourly-changefeed/changes")
     ld = sub.add_parser("load", help="consumer: load new change files into CHANGEFEED_CONSUMER_DB")
     ld.add_argument("--dir", type=Path, default=Path.home() / ".local/share/hourly-changefeed/changes")
+    sub.add_parser("report", help="consumer: fill rates, freshness and missed hours")
     cs = sub.add_parser("consumer-setup", help="create the loader's role and database (run as a superuser)")
     cs.add_argument("--consumer-db", default="changefeed_consumer")
     cs.add_argument("--role", default="changefeed_loader")
@@ -59,6 +60,10 @@ def main(argv: list[str] | None = None) -> int:
         except load.LoadError as e:
             print(f"refused: {e}", file=sys.stderr)
             return 1
+        return 0
+    if args.cmd == "report":
+        with psycopg.connect(os.environ.get("CHANGEFEED_CONSUMER_DB", ""), options="-c timezone=UTC") as conn:
+            print(reports.render(conn))
         return 0
     with psycopg.connect(os.environ.get("CHANGEFEED_DB", ""), autocommit=True) as conn:
         if args.cmd == "consumer-setup":
