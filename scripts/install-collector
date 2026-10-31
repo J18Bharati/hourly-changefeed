@@ -12,7 +12,7 @@ nix build "$repo#default" --out-link "$state/result"
 nix build "$repo#postgres" --out-link "$state/postgres"
 PATH="$state/postgres/bin:$PATH" PGDATA="$data/pgdata" "$repo/scripts/pg-init"
 
-install -m 0644 "$repo"/deploy/systemd/changefeed{-postgres.service,.service,.timer} "$HOME/.config/systemd/user/"
+install -m 0644 "$repo"/deploy/systemd/changefeed*.{service,timer} "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
 systemctl --user enable --now changefeed-postgres.service
 
@@ -22,10 +22,10 @@ fi
 export CHANGEFEED_DB="host=$sock dbname=changefeed"
 "$state/result/bin/changefeed" migrate
 "$state/result/bin/changefeed" seed load "$repo/registry/boards.tsv"
-systemctl --user enable --now changefeed.timer
+systemctl --user enable --now changefeed.timer changefeed-daily.timer
 
 if ! loginctl show-user "$USER" -p Linger | grep -q '=yes'; then
   echo "install-collector: Linger is off, so the timer only runs while you are logged in." >&2
   echo "install-collector: run 'loginctl enable-linger' to keep it running after logout." >&2
 fi
-systemctl --user list-timers changefeed.timer --no-pager
+systemctl --user list-timers 'changefeed*' --no-pager

@@ -4,11 +4,12 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import psycopg
 
-from changefeed import collect, db, registry, versions
+from changefeed import collect, db, ops, registry, versions
 from changefeed.adapters import ADAPTERS
 
 
@@ -18,6 +19,11 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("migrate", help="apply pending schema migrations")
     sub.add_parser("run", help="fetch every due board once")
     sub.add_parser("run-hour", help="what the timer runs: record missed hours, then run, under a lock")
+    sub.add_parser("health", help="exit 1 unless some board was fetched successfully in the last 2 hours")
+    sub.add_parser("status", help="runs, outcomes, churn, and boards or postings that need a look")
+    sub.add_parser("maintain", help="prune raw bodies older than 14 days and record today's sizes")
+    bk = sub.add_parser("backup", help="pg_dump without raw bodies, keeping the newest 3")
+    bk.add_argument("--dir", type=Path, default=Path.home() / ".local/share/hourly-changefeed/backups")
     rb = sub.add_parser("rebuild-versions", help="replay every board's history from its raw bodies")
     rb.add_argument("--board", type=int, help="only this board id")
     seed = sub.add_parser("seed", help="manage the board registry").add_subparsers(dest="seed_cmd", required=True)
@@ -54,6 +60,23 @@ def main(argv: list[str] | None = None) -> int:
         counts = ", ".join(f"{k}: {v}" for k, v in sorted(result.counts.items())) or "nothing due"
         print(f"run {result.id}: {result.status} ({counts})")
         return 1 if result.status == "missed" else 0
+    conninfo = os.environ.get("CHANGEFEED_DB", "")
+    if args.cmd in ("health", "status", "maintain"):
+        with psycopg.connect(conninfo, autocommit=True) as conn:
+            if args.cmd == "health":
+                ok, message = ops.health(conn)
+                print(("ok: " if ok else "UNHEALTHY: ") + message)
+                return 0 if ok else 1
+            if args.cmd == "status":
+                print(ops.status(conn))
+                return 0
+            r = ops.report(conn, ops.prune(conn))
+            print(", ".join(f"{k} {v}" for k, v in r.items()))
+            return 0
+    if args.cmd == "backup":
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%MZ")
+        print(ops.backup(conninfo, args.dir, stamp=stamp))
+        return 0
     if args.cmd == "rebuild-versions":
         with psycopg.connect(os.environ.get("CHANGEFEED_DB", ""), autocommit=True) as conn:
             conn.execute("SELECT pg_advisory_lock(%s)", (collect.RUN_LOCK,))  # never during a run

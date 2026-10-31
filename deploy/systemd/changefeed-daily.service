@@ -1,0 +1,13 @@
+[Unit]
+Description=hourly-changefeed daily upkeep: prune raw bodies, record sizes, back up
+Requires=changefeed-postgres.service
+After=changefeed-postgres.service
+
+[Service]
+Type=oneshot
+Environment="CHANGEFEED_DB=host=%h/.local/share/hourly-changefeed/pgdata/sock dbname=changefeed"
+Environment=PATH=%h/.local/state/changefeed/postgres/bin:/usr/bin:/bin
+ExecStart=%h/.local/state/changefeed/result/bin/changefeed maintain
+ExecStart=%h/.local/state/changefeed/result/bin/changefeed backup
+TimeoutStartSec=30min
+Nice=15

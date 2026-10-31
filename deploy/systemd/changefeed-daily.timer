@@ -1,0 +1,10 @@
+[Unit]
+Description=hourly-changefeed daily upkeep
+
+[Timer]
+# Half past, so it never starts alongside the hourly run.
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
