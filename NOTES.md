@@ -116,3 +116,16 @@ Four runs on the dev database, about 25 minutes apart in total.
 - **Live after deploy:** the timer fired on reload, then run 4 (201 not modified), `emitted 1 hours`, `loaded 1 hours`.
   - Hour 21:00 UTC is 46,415 rows over 201 boards.
   - Its data sha256 equals the misdated `20.jsonl` from before the UTC fix: every version was recorded between 21:12 and 21:30 UTC, inside both windows, so the same rows gave the same bytes under different code.
+
+## 2026-11-01: /cso (static), the network-facing paths
+
+- **Result: no supported findings in what I assessed.** gstack-cso run `1793485694847-35a760c453086b63` (daily, static, 10-minute budget).
+- **The helper's saved report says `partial` with every domain `not_assessed`.** That is my error, not the code's: I called `finish` before submitting coverage, and a finished run accepts no evidence. The real coverage is below.
+- **What I read, and what holds:**
+  - **fetch.py.** The host allowlist is checked on every redirect hop. Only http(s) is allowed. `trust_env=False`, so no proxy comes from the environment. One Content-Encoding layer at most, inflated against a hard 64 MiB cap. A 120 s deadline covers redirects too. Retry-After is clamped to 24 h.
+  - **Board tokens.** `Adapter.url` takes a regex-checked token, refuses `..`, and percent-quotes it. That covers `seed import` and every fetch. `seed load` (from the repo's TSV) inserts without the check, but every fetch goes back through `url()`.
+  - **load.py.** A manifest may only name its own `HH.jsonl`, and its hour must match its path, so no path traversal. Every value reaches SQL as a parameter or through COPY. `provision` builds identifiers with `sql.Identifier`.
+  - **ops.backup** runs `pg_dump` from an argument list, with no shell.
+  - **Local boundary.** initdb leaves `pgdata` at 0700, and the trust-auth socket lives inside it, so no other OS user can reach the cluster. `changes/` and `backups/` are 0775, but group `zero` has no other members.
+- **Hardening, not a finding:** `status` prints posting external ids and board tokens without `reports._printable`. Ids come from the ATS (companies don't choose them), so only a hostile or compromised ATS could put terminal escapes there.
+- **Not covered:** dependency advisories (no scanner profile ran), CI (none exists), and the four gzip test fixtures (withheld by the helper).
