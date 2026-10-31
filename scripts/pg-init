@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# pg-scripts v1 (source: _portfolio_ shared Postgres pattern)
+# Create a project-local cluster in $PGDATA with a unix socket only. Idempotent.
+set -euo pipefail
+: "${PGDATA:?run inside nix develop}"
+if [ -f "$PGDATA/PG_VERSION" ]; then exit 0; fi
+sock="$PGDATA/sock"
+if [ "${#sock}" -gt 100 ]; then
+  echo "pg-init: socket path too long (${#sock} > 100 bytes): $sock" >&2; exit 1
+fi
+initdb -D "$PGDATA" --auth=trust --username="$USER" --encoding=UTF8 --no-locale >/dev/null
+mkdir -p "$sock"
+cat >> "$PGDATA/postgresql.conf" <<CONF
+listen_addresses = ''
+unix_socket_directories = '$sock'
+fsync = on
+CONF
+echo "pg-init: cluster created in $PGDATA"
