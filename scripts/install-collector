@@ -21,6 +21,7 @@ if ! "$state/postgres/bin/psql" -h "$sock" -d postgres -tAc "SELECT 1 FROM pg_da
 fi
 export CHANGEFEED_DB="host=$sock dbname=changefeed"
 "$state/result/bin/changefeed" migrate
+"$state/result/bin/changefeed" consumer-setup
 "$state/result/bin/changefeed" seed load "$repo/registry/boards.tsv"
 systemctl --user enable --now changefeed.timer changefeed-daily.timer
 

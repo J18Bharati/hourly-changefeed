@@ -31,7 +31,7 @@ def test_edited_migration_is_refused(empty_db, monkeypatch):
         real = db.load_migrations()
         first = real[0]
         tampered = [db.Migration(first.version, first.sql + "\n-- edited", )] + real[1:]
-        monkeypatch.setattr(db, "load_migrations", lambda: tampered)
+        monkeypatch.setattr(db, "load_migrations", lambda package=None: tampered)
         with pytest.raises(db.MigrationError, match=first.version):
             db.migrate(conn)
 

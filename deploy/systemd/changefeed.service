@@ -6,9 +6,12 @@ After=changefeed-postgres.service
 [Service]
 Type=oneshot
 Environment="CHANGEFEED_DB=host=%h/.local/share/hourly-changefeed/pgdata/sock dbname=changefeed"
+Environment="CHANGEFEED_CONSUMER_DB=host=%h/.local/share/hourly-changefeed/pgdata/sock dbname=changefeed_consumer user=changefeed_loader"
 ExecStart=%h/.local/state/changefeed/result/bin/changefeed run-hour
 # Then write the change files for every hour that has finished (at least the previous one).
 ExecStart=%h/.local/state/changefeed/result/bin/changefeed emit
+# Then load them into the consumer database, as a role that cannot connect to the producer.
+ExecStart=%h/.local/state/changefeed/result/bin/changefeed load
 # A oneshot's whole run is its start phase, so this is the limit; RuntimeMaxSec= is ignored for
 # Type=oneshot (systemd-analyze verify says so). Kill a hung run before the next hour's.
 TimeoutStartSec=50min

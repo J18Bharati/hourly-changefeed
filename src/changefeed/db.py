@@ -1,4 +1,5 @@
-# Copied from andrefetch-gator @ ebdaff9 (src/gator/db.py); the lock key and package name differ.
+# Copied from andrefetch-gator @ ebdaff9 (src/gator/db.py); the lock key and package name differ,
+# and the package is a parameter so the consumer database (load.py) has its own migrations.
 """Schema migrations: numbered SQL files applied once each, in order, under an advisory lock.
 
 A migration that was applied and later edited is refused rather than silently skipped.
@@ -26,15 +27,15 @@ class Migration:
         return hashlib.sha256(self.sql.encode()).hexdigest()
 
 
-def load_migrations() -> list[Migration]:
-    files = resources.files("changefeed.migrations")
+def load_migrations(package: str = "changefeed.migrations") -> list[Migration]:
+    files = resources.files(package)
     return sorted(
         (Migration(f.name.removesuffix(".sql"), f.read_text()) for f in files.iterdir() if f.name.endswith(".sql")),
         key=lambda m: m.version,
     )
 
 
-def migrate(conn: psycopg.Connection) -> list[str]:
+def migrate(conn: psycopg.Connection, package: str = "changefeed.migrations") -> list[str]:
     """Apply pending migrations. Returns the versions applied by this call."""
     applied_now = []
     with conn.transaction():
@@ -46,7 +47,7 @@ def migrate(conn: psycopg.Connection) -> list[str]:
                 applied_at timestamptz NOT NULL DEFAULT now()
             )""")
         done = dict(conn.execute("SELECT version, checksum FROM schema_migrations").fetchall())
-        for m in load_migrations():
+        for m in load_migrations(package):
             if m.version in done:
                 if done[m.version] != m.checksum:
                     raise MigrationError(f"migration {m.version} was edited after it was applied")

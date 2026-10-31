@@ -1,5 +1,6 @@
 """changefeed command line. The database comes from CHANGEFEED_DB (a libpq conninfo); empty means
-libpq's own defaults (PGHOST, PGDATABASE, ...)."""
+libpq's own defaults (PGHOST, PGDATABASE, ...). `load` uses CHANGEFEED_CONSUMER_DB instead and never
+connects to the producer."""
 import argparse
 import json
 import os
@@ -9,7 +10,7 @@ from pathlib import Path
 
 import psycopg
 
-from changefeed import collect, db, emit, ops, registry, versions
+from changefeed import collect, db, emit, load, ops, registry, versions
 from changefeed.adapters import ADAPTERS
 
 
@@ -21,6 +22,11 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("run-hour", help="what the timer runs: record missed hours, then run, under a lock")
     em = sub.add_parser("emit", help="write the change file and manifest for every finished hour")
     em.add_argument("--out", type=Path, default=Path.home() / ".local/share/hourly-changefeed/changes")
+    ld = sub.add_parser("load", help="consumer: load new change files into CHANGEFEED_CONSUMER_DB")
+    ld.add_argument("--dir", type=Path, default=Path.home() / ".local/share/hourly-changefeed/changes")
+    cs = sub.add_parser("consumer-setup", help="create the loader's role and database (run as a superuser)")
+    cs.add_argument("--consumer-db", default="changefeed_consumer")
+    cs.add_argument("--role", default="changefeed_loader")
     sub.add_parser("health", help="exit 1 unless some board was fetched successfully in the last 2 hours")
     sub.add_parser("status", help="runs, outcomes, churn, and boards or postings that need a look")
     sub.add_parser("maintain", help="prune raw bodies older than 14 days and record today's sizes")
@@ -47,7 +53,18 @@ def main(argv: list[str] | None = None) -> int:
         args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
     except SystemExit as e:  # argparse has printed usage (or --help) already
         return 1 if e.code else 0
+    if args.cmd == "load":
+        try:
+            print(f"loaded {load.load(os.environ.get('CHANGEFEED_CONSUMER_DB', ''), args.dir)} hours")
+        except load.LoadError as e:
+            print(f"refused: {e}", file=sys.stderr)
+            return 1
+        return 0
     with psycopg.connect(os.environ.get("CHANGEFEED_DB", ""), autocommit=True) as conn:
+        if args.cmd == "consumer-setup":
+            load.provision(conn, consumer_db=args.consumer_db, producer_db=conn.info.dbname, role=args.role)
+            print(f"{args.consumer_db} owned by {args.role}, which cannot connect to {conn.info.dbname}")
+            return 0
         if args.cmd == "migrate":
             applied = db.migrate(conn)
             print("\n".join(f"applied {v}" for v in applied) or "schema up to date")
