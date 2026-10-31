@@ -56,3 +56,9 @@ Four runs on the dev database, about 25 minutes apart in total.
 - **The test that paid for itself:** re-baselining after a normaliser change first read "the board's latest accepted body", which by then was the body being stored, so the re-baseline absorbed that fetch's real change. It now reads the latest body *before* this fetch.
 - **Nulls aren't versioned on first sight** (a missing version means null), which saved about 40% of rows; a later change *to* null is still a version. Empty lists (`departments: []`) are values and are versioned.
 - **Property tests**, over 50 seeded random histories: `as_of(t, t)` equals the state held right after the fetch at t, and valid time only moves forward and never passes recorded time. Making the engine version only `title` fails 25 of them.
+
+## 2026-11-01: operations (M5b), and where the bytes actually go
+
+- Live after deploy: `health` ok, `status` no alerts, the first backup (without raw bodies) is 11 MB, and the daily timer runs at 04:30.
+- **Number that looked wrong: the database is 93 MB, but raw bodies, the thing the plan worried about, are 10 MB of it.** `postings_current` is 43 MB and `posting_field_versions` 28 MB, of which `description` is 16 MB. Descriptions are stored three times over: inside the raw body (lz4), in the current row, and in the first version. jsonb in `postings_current` is TOAST-compressed with pglz by default, not lz4.
+- **So the growth to watch is edited descriptions,** each a full HTML copy in `posting_field_versions`, not raw bodies, which are deduplicated by hash and pruned after 14 days. `storage_reports.versions_24h` tracks it. If it gets large: set lz4 on the jsonb columns, or store descriptions once by hash.
