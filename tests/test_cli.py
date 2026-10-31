@@ -24,3 +24,9 @@ def test_boards_are_unique_per_source_and_token(conn):
         raise AssertionError("duplicate board accepted")
     except psycopg.errors.UniqueViolation:
         pass
+
+
+def test_run_with_nothing_due(dbname, monkeypatch, capsys):
+    monkeypatch.setenv("CHANGEFEED_DB", f"dbname={dbname}")
+    assert cli.main(["run"]) == 0
+    assert capsys.readouterr().out.startswith("run 1: ok (nothing due)")

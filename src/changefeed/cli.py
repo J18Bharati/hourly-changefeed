@@ -8,7 +8,7 @@ from pathlib import Path
 
 import psycopg
 
-from changefeed import db, registry
+from changefeed import collect, db, registry
 from changefeed.adapters import ADAPTERS
 
 
@@ -16,6 +16,7 @@ def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="changefeed")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("migrate", help="apply pending schema migrations")
+    sub.add_parser("run", help="fetch every due board once")
     seed = sub.add_parser("seed", help="manage the board registry").add_subparsers(dest="seed_cmd", required=True)
     imp = seed.add_parser("import", help="add candidate boards from a JSON list of tokens")
     imp.add_argument("source", choices=sorted(ADAPTERS))
@@ -41,6 +42,12 @@ def main(argv: list[str] | None = None) -> int:
             print("\n".join(f"applied {v}" for v in applied) or "schema up to date")
             return 0
         db.migrate(conn)
+    if args.cmd == "run":
+        result = collect.run(os.environ.get("CHANGEFEED_DB", ""))
+        counts = ", ".join(f"{k}: {v}" for k, v in sorted(result.counts.items())) or "nothing due"
+        print(f"run {result.id}: {result.status} ({counts})")
+        return 1 if result.status == "missed" else 0
+    with psycopg.connect(os.environ.get("CHANGEFEED_DB", ""), autocommit=True) as conn:
         match args.seed_cmd:
             case "import":
                 tokens = json.loads(args.file.read_text())

@@ -23,3 +23,21 @@ Recorded with curl against one board each; the headers are in `tests/fixtures/RE
 - **Number that looked wrong: Lever kept only 32%.** In the first batch 37 of 60 Lever tokens were 404, against 37 of 110 for Greenhouse and 19 of 60 for Ashby. The source list is an accumulation of every token its scraper has ever seen, and Lever tokens die (companies leaving Lever, or renaming the board) without the list forgetting them. So the registry over-represents Greenhouse and Ashby relative to the published list; any per-ATS comparison later must say so.
 - **No adapter failures on 201 live boards**, beyond the 3 fixtures they were written against.
 - **One full sweep is 58.4 MB uncompressed.** Medians are about 10 postings per board; the largest board is 3.8 MB (Ashby). That's the number to watch against disk in M3/M5b: it's the cost per hour if every board changed, before dedupe by body hash and lz4.
+
+## 2026-11-01: first runs against the 201 boards (M3)
+
+Four runs on the dev database, about 25 minutes apart in total.
+
+| Run | What was sent | Result | Wall time |
+|---|---|---|---|
+| 1 | nothing (first fetch) | ok: 201 | 85 s |
+| 2 | stored ETag | not_modified: 201 | 76 s |
+| 3 | no ETag | unchanged: 201 (same bytes as run 1) | 54 s |
+| 4 | stored ETag, after the worker change below | not_modified: 201 | 24 s |
+
+- **Number that looked wrong: 201 bodiless 304s took 76 s, nearly as long as fetching everything.** Two causes:
+  - **Lever does the work before it says 304.** Median 1.4 s for a 304 against 2.1 s for a full 200, worst 28 s. Its weak ETags (`W/"len-hash"`, the Express style) are computed from the rendered body, so a 304 saves bandwidth but not Lever's time, or ours.
+  - **My worker pool made it worse.** 6 shared workers with a 2-per-API semaphore: a worker that claimed a Lever board blocked on the semaphore, so up to 4 workers sat waiting on Lever while Greenhouse and Ashby boards were due. Now each API gets its own 2 workers, which claim only that API's boards. The same all-304 run took 24 s.
+- **The exit criterion passed trivially.** It asks for every board fetched twice, with any repeat whose normalised form differs treated as a normaliser bug. All 201 repeats were byte-identical, so nothing could differ. Re-parsing all 201 stored bodies twice gave identical results (4,653 postings). The real test is hourly data, which M4 is built against.
+- **Stale rule, changed from the plan.** The plan said a copy is stale when the board's newest source timestamp goes backwards. But closing the newest posting does exactly that, and the board would read as stale until someone posted a newer job (`test_closing_the_newest_posting_is_not_stale` fails under the plan's rule). Instead, a copy is stale when a posting present in both copies has an older source timestamp. Lever and Ashby only give a creation or publish time, so this can only catch lagging copies on Greenhouse; for the other two, M4's rule that a posting is closed only after 2 agreeing fetches is the defence.
+- **Raw bodies compress 5.8× with lz4:** 58.4 MB of bodies take 10 MB in `raw_bodies`. If every board changed every hour for 14 days that would be 3.4 GB; M5b reports the real rate.
