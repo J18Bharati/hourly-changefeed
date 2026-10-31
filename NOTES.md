@@ -68,3 +68,19 @@ Four runs on the dev database, about 25 minutes apart in total.
 - **Number that looked wrong: the first live change file was `2026/10/31/20.jsonl`, and its manifest said the hour began at `20:30:00+00:00`.** Collection had started at 02:42 IST, which is 21:12 UTC, so a 20:xx file was already odd, and no UTC hour starts at :30. `date_trunc('hour', now())` truncates in the session's time zone, and this machine is Asia/Kolkata (+05:30). Every "hour" (run hours, `next_fetch_at`, the emit watermark) began at :30 UTC.
 - It would have been invisible on a UTC server and is only half visible in IST, where the files look plausible. `tests/test_utc_hours.py` sets the database's time zone to Asia/Kolkata and checks that run hours, `next_fetch_at` and manifest hours are all on UTC hours. It failed before the fix.
 - Fix: every `date_trunc('hour', ...)` now passes `'UTC'`. Migration 0008 sets the same default on `collection_runs.hour`, re-derives existing run hours from `started_at`, and moves future `next_fetch_at` onto UTC hours. The one wrong file was deleted along with its `emitted_hours` row. Live, the three runs so far now share the 21:00 UTC hour (02:42, 03:00 and 03:01 IST), which the 04:00 IST timer run emits once that hour has ended.
+
+## 2026-11-01: the consumer (M7–M9)
+
+- **Loader (M7).** `changefeed load` reads change files only. Each file is checked before anything is written:
+  - the manifest names its own data file and nothing else (no `../`);
+  - size, sha256 and line count match;
+  - `prev_manifest_sha256` is the last manifest loaded.
+
+  The file then loads in one transaction (`COPY` into a temp table, merge, ledger row). Each check was removed in turn and a test failed every time (8 mutations).
+- **What the chain buys:** a missing hour, a reordered hour, or an edited file whose manifest was "fixed up" all fail at the next manifest. An hour already loaded with a different manifest is refused rather than merged, because a producer rewriting history is something to look at, not to absorb.
+- **The loader's role** (`changefeed_loader`) owns `changefeed_consumer` and has no CONNECT on the producer: checked live (`User does not have CONNECT privilege`). Honest limit: the cluster uses trust auth on a private socket, so this keeps the loader's *code* out of the producer. It is no barrier against a local user, who can connect as any role.
+- **`as_of` on the consumer (M8)** compares `known` with the producer's `recorded_at`, carried in every row, never with the load time. Otherwise loading a week of files today would make today the moment everything was learned, the same look-ahead leak M4 exists to prevent. Property test: 15 random histories are emitted, loaded and probed at (t, t), (t, now) and random pairs. The answers match the producer's; dropping `recorded_at <= known` or flipping the valid-time order fails.
+- **Reports (M9).** Fill rate counts `""`, `[]` and `{}` as missing as well as null, because an empty department list says no more than a missing one.
+  - Freshness is measured only on non-baseline rows with a source valid time. A first sighting's source time is the posting's creation, which says how old the posting is, not how late we were.
+  - So freshness is in practice a Greenhouse-only number; Lever and Ashby edits are 'observed' and have zero lag by construction.
+  - **Deviation:** stale tokens stay in the producer's `status`. The change files carry versions, not fetch outcomes, so the consumer cannot see a 404.
