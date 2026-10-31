@@ -30,6 +30,8 @@
           build-system = [ pkgs.python312Packages.hatchling ];
           dependencies = with pkgs.python312Packages; [ psycopg httpx ];
         };
+        # The collector's own server, pinned with everything else (collect.PG_MAJOR must match).
+        postgres = pkgs.postgresql_17;
       });
     };
 }

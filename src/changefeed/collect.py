@@ -32,6 +32,12 @@ CLOCK_SKEW = timedelta(minutes=5)          # a stored source time further ahead 
 ROLLBACK_AFTER = (3, timedelta(hours=24))  # stale replies, held this long, mean the source really went back
 HEADERS = ("date", "age", "last-modified", "etag", "cache-control", "cf-cache-status", "via")
 SUCCESS = {"ok", "not_modified", "unchanged", "stale"}
+RUN_LOCK = 0x6366_7275  # "cfru": held for the whole of run_hour, so a manual run can't overlap the timer
+PG_MAJOR = 17           # the flake pins postgresql_17; the collector's data directory must match
+
+
+class WrongPostgres(RuntimeError):
+    pass
 
 
 # --- one board ------------------------------------------------------------------------------
@@ -186,6 +192,28 @@ class Run:
 
 def free_bytes(conn) -> int:
     return shutil.disk_usage(conn.execute("SHOW data_directory").fetchone()[0]).free
+
+
+def record_missed(conn) -> int:
+    """Write a 'missed' row for every whole hour since the last run that had no run at all."""
+    return conn.execute("""
+        INSERT INTO collection_runs (hour, started_at, finished_at, status, reason)
+        SELECT h, h, h, 'missed', 'no run'
+        FROM generate_series((SELECT max(hour) FROM collection_runs) + interval '1 hour',
+                             date_trunc('hour', now()) - interval '1 hour', interval '1 hour') AS h""").rowcount
+
+
+def run_hour(conninfo: str) -> Run | None:
+    """The timer's entry point: one run at a time, gaps recorded, then fetch what is due.
+    Returns None, writing nothing, if another run holds the lock."""
+    with psycopg.connect(conninfo, autocommit=True) as conn:
+        if not conn.execute("SELECT pg_try_advisory_lock(%s)", (RUN_LOCK,)).fetchone()[0]:
+            return None
+        major = int(conn.execute("SHOW server_version_num").fetchone()[0]) // 10000
+        if major != PG_MAJOR:
+            raise WrongPostgres(f"collector database runs Postgres {major}, but this build pins {PG_MAJOR}")
+        record_missed(conn)
+        return run(conninfo)  # the lock is released when this connection closes
 
 
 def run(conninfo: str) -> Run:

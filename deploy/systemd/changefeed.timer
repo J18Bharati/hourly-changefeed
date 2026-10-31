@@ -1,0 +1,10 @@
+[Unit]
+Description=Run hourly-changefeed at the top of every hour
+
+[Timer]
+OnCalendar=hourly
+# After sleep or power-off, run once on wake; the run itself records the hours it missed.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

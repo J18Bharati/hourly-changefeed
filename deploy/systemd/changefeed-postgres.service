@@ -1,0 +1,16 @@
+[Unit]
+Description=Postgres 17 for hourly-changefeed (unix socket only, no TCP)
+Documentation=file://%h/.local/share/hourly-changefeed
+
+[Service]
+Type=notify
+ExecStart=%h/.local/state/changefeed/postgres/bin/postgres -D %h/.local/share/hourly-changefeed/pgdata
+ExecReload=/bin/kill -HUP $MAINPID
+# SIGINT is Postgres's "fast" shutdown: roll back open transactions, checkpoint, exit.
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=120
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

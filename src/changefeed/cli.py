@@ -17,6 +17,7 @@ def _parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("migrate", help="apply pending schema migrations")
     sub.add_parser("run", help="fetch every due board once")
+    sub.add_parser("run-hour", help="what the timer runs: record missed hours, then run, under a lock")
     seed = sub.add_parser("seed", help="manage the board registry").add_subparsers(dest="seed_cmd", required=True)
     imp = seed.add_parser("import", help="add candidate boards from a JSON list of tokens")
     imp.add_argument("source", choices=sorted(ADAPTERS))
@@ -42,8 +43,12 @@ def main(argv: list[str] | None = None) -> int:
             print("\n".join(f"applied {v}" for v in applied) or "schema up to date")
             return 0
         db.migrate(conn)
-    if args.cmd == "run":
-        result = collect.run(os.environ.get("CHANGEFEED_DB", ""))
+    if args.cmd in ("run", "run-hour"):
+        conninfo = os.environ.get("CHANGEFEED_DB", "")
+        result = collect.run(conninfo) if args.cmd == "run" else collect.run_hour(conninfo)
+        if result is None:
+            print("another run holds the lock; nothing to do")
+            return 0
         counts = ", ".join(f"{k}: {v}" for k, v in sorted(result.counts.items())) or "nothing due"
         print(f"run {result.id}: {result.status} ({counts})")
         return 1 if result.status == "missed" else 0

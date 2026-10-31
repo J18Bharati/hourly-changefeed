@@ -1,0 +1,11 @@
+[Unit]
+Description=hourly-changefeed: fetch every due job board once
+Requires=changefeed-postgres.service
+After=changefeed-postgres.service
+
+[Service]
+Type=oneshot
+Environment="CHANGEFEED_DB=host=%h/.local/share/hourly-changefeed/pgdata/sock dbname=changefeed"
+ExecStart=%h/.local/state/changefeed/result/bin/changefeed run-hour
+RuntimeMaxSec=50min
+Nice=10
