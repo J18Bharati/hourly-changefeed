@@ -179,11 +179,24 @@ ADAPTERS = {
 }
 
 
+def _clean(value):
+    """Drop NUL and replace lone surrogates in every string: json.loads accepts both, jsonb refuses
+    both, and one such character would crash the board's store every hour until it was disabled."""
+    if isinstance(value, str):
+        return value.replace("\x00", "").encode("utf-8", "replace").decode("utf-8")
+    if isinstance(value, list):
+        return [_clean(v) for v in value]
+    if isinstance(value, dict):
+        return {_clean(k): _clean(v) for k, v in value.items()}
+    return value
+
+
 def parse_board(source: str, body: bytes) -> Board:
     try:
         data = json.loads(body)
     except (ValueError, UnicodeDecodeError) as e:  # JSONDecodeError is a ValueError
         raise ShapeError(f"not JSON: {e}") from None
+    data = _clean(data)
     seen, postings, dupes = set(), [], 0
     for p in ADAPTERS[source].parse(data):
         if p.external_id in seen:

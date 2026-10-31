@@ -2,8 +2,9 @@
 
 Layout: <out>/YYYY/MM/DD/HH.jsonl and HH.manifest.json, hours in UTC. Every finished hour gets
 both, even with nothing in it (an empty file) or no run at all (declared in the manifest), so a
-consumer can tell "nothing changed" from "we weren't looking". Each manifest carries the sha256
-of the previous one, so the files form a chain a loader can check.
+consumer can tell "nothing changed" from "we weren't looking". Format 2 adds, per board, how its
+last fetch in the hour went, so a board that stopped being fetched (404s, backoff) is visible too.
+Each manifest carries the sha256 of the previous one, so the files form a chain a loader can check.
 
 The bytes depend only on the stored versions: rows are sorted by content, not by row id, and the
 manifest has no wall-clock fields. Emitting an hour twice gives the same bytes.
@@ -24,7 +25,11 @@ from changefeed.collect import RUN_LOCK
 
 UTC = timezone.utc
 HOUR = timedelta(hours=1)
-FORMAT = 1
+FORMAT = 2
+
+
+class EmitError(RuntimeError):
+    pass
 
 
 def _write_atomic(path: Path, data: bytes) -> None:
@@ -50,7 +55,18 @@ def _dumps(obj) -> bytes:
     return (json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
 
 
-def _rows(conn, hour: datetime) -> bytes:
+def _hours(start: datetime, limit: datetime):
+    """UTC hours from start up to limit. Stepping in UTC matters: psycopg returns timestamps in the
+    session's zone, and an hour added to a zoned datetime is wall-clock time, which skips or repeats
+    an hour at a DST change."""
+    hour = start.astimezone(UTC)
+    while hour < limit:
+        yield hour
+        hour += HOUR
+
+
+def _rows(conn, hour: datetime) -> tuple[bytes, int]:
+    """The hour's change file and its row count."""
     rows = conn.execute("""
         SELECT b.source, b.token, p.external_id, v.field, v.value, v.valid_from, v.valid_from_source,
                v.recorded_at, v.run_id, coalesce(l.baseline, false)
@@ -65,6 +81,15 @@ def _rows(conn, hour: datetime) -> bytes:
         "field": field, "value": value, "valid_from": _stamp(vf), "valid_from_source": why,
         "recorded_at": _stamp(rec), "run_id": run_id, "baseline": baseline,
     }) for src, token, eid, field, value, vf, why, rec, run_id, baseline in rows), len(rows)
+
+
+def _boards(conn, hour: datetime) -> dict:
+    """{"source/token": outcome of the board's last fetch recorded in the hour}, for boards fetched."""
+    return dict(conn.execute("""
+        SELECT DISTINCT ON (l.board_id) b.source || '/' || b.token, l.outcome
+        FROM fetch_log l JOIN boards b ON b.id = l.board_id
+        WHERE l.recorded_at >= %s AND l.recorded_at < %s
+        ORDER BY l.board_id, l.recorded_at DESC, l.id DESC""", (hour, hour + HOUR)).fetchall())
 
 
 def _collection(conn, hour: datetime) -> dict:
@@ -88,20 +113,23 @@ def emit(conninfo: str, out: Path) -> int:
                    coalesce((SELECT max(hour) + interval '1 hour' FROM emitted_hours),
                             (SELECT min(hour) FROM collection_runs)),
                    (SELECT manifest_sha256 FROM emitted_hours ORDER BY hour DESC LIMIT 1)""").fetchone()
-        hour = start
-        while hour is not None and hour < limit:
+        if start is None:
+            return 0
+        if start.astimezone(UTC) != start.astimezone(UTC).replace(minute=0, second=0, microsecond=0):
+            raise EmitError(f"the chain continues from {start}, which is not on a UTC hour (see migration 0008)")
+        for hour in _hours(start, limit):
             data, n = _rows(conn, hour)
+            digest = hashlib.sha256(data).hexdigest()
             base = out / hour.astimezone(UTC).strftime("%Y/%m/%d/%H")
             manifest = _dumps({
                 "format": FORMAT, "hour": _stamp(hour), "file": base.name + ".jsonl", "rows": n,
-                "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
-                "collection": _collection(conn, hour), "prev_manifest_sha256": prev,
+                "bytes": len(data), "sha256": digest,
+                "collection": _collection(conn, hour), "boards": _boards(conn, hour), "prev_manifest_sha256": prev,
             })
             _write_atomic(base.with_name(base.name + ".jsonl"), data)
             _write_atomic(base.with_name(base.name + ".manifest.json"), manifest)  # present = complete
             prev = hashlib.sha256(manifest).hexdigest()
             conn.execute("INSERT INTO emitted_hours (hour, rows, sha256, manifest_sha256) VALUES (%s, %s, %s, %s)",
-                         (hour, n, hashlib.sha256(data).hexdigest(), prev))
+                         (hour, n, digest, prev))
             written += 1
-            hour += HOUR
     return written

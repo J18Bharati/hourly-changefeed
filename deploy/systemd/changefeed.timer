@@ -2,7 +2,9 @@
 Description=Run hourly-changefeed at the top of every hour
 
 [Timer]
-OnCalendar=hourly
+# UTC, not local time: in Asia/Kolkata "hourly" fires at :30 UTC, half way through the hours the
+# change files are cut on.
+OnCalendar=*-*-* *:00:00 UTC
 # After sleep or power-off, run once on wake; the run itself records the hours it missed.
 Persistent=true
 

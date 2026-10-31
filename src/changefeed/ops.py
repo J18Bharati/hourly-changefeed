@@ -1,6 +1,6 @@
 """Running the collector: is it healthy, what needs a look, and keeping the disk in check."""
 import subprocess
-from datetime import timedelta
+from datetime import timedelta, timezone
 from pathlib import Path
 
 import psycopg
@@ -12,13 +12,21 @@ SUCCESS = ("ok", "not_modified", "unchanged", "stale")
 
 
 def health(conn) -> tuple[bool, str]:
-    """Healthy if some board was fetched successfully within the last two hours."""
+    """Healthy if some board was fetched successfully within the last two hours, and change files
+    are no more than two hours behind."""
     last = conn.execute("SELECT max(recorded_at) FROM fetch_log WHERE outcome = ANY(%s)", (list(SUCCESS),)).fetchone()[0]
     if last is None:
         return False, "no successful fetch yet"
     age = conn.execute("SELECT now() - %s", (last,)).fetchone()[0]
     hours = age.total_seconds() / 3600
-    return age <= HEALTHY_WITHIN, f"last success {hours:.1f} h ago ({last.isoformat(timespec='seconds')})"
+    message = f"last success {hours:.1f} h ago ({last.isoformat(timespec='seconds')})"
+    behind = conn.execute("""
+        SELECT date_trunc('hour', now(), 'UTC')
+               - coalesce((SELECT max(hour) + interval '1 hour' FROM emitted_hours), (SELECT min(hour) FROM collection_runs))
+        """).fetchone()[0]
+    if behind is not None and behind > HEALTHY_WITHIN:
+        return False, f"{message}; change files are {behind.total_seconds() / 3600:.0f} h behind"
+    return age <= HEALTHY_WITHIN, message
 
 
 def status(conn) -> str:
@@ -59,6 +67,14 @@ def status(conn) -> str:
             WHERE v.field = 'present' AND v.value = 'false'::jsonb AND v.recorded_at > now() - interval '7 days'
             GROUP BY 1, 2 HAVING count(*) >= 2 ORDER BY 1, 2"""):
         alerts.append(f"{name} posting {eid}: closed {n} times in 7 d (flapping)")
+    for hour, emitted, now in conn.execute("""
+            SELECT e.hour, e.rows, (SELECT count(*) FROM posting_field_versions v
+                                    JOIN postings_current p ON p.id = v.posting_id JOIN boards b ON b.id = p.board_id
+                                    WHERE v.recorded_at >= e.hour AND v.recorded_at < e.hour + interval '1 hour')
+            FROM emitted_hours e WHERE e.hour > now() - interval '7 days' ORDER BY e.hour"""):
+        if emitted != now:  # a clock stepped back, a writer outside the run lock, or a rebuild
+            alerts.append(f"hour {hour.astimezone(timezone.utc):%Y-%m-%d %H}:00Z changed since emitted: "
+                          f"{emitted} rows emitted, {now} now")
     lines.append("alerts:" if alerts else "alerts: none")
     lines.extend(f"  {a}" for a in alerts)
     return "\n".join(lines)
@@ -97,8 +113,12 @@ def backup(conninfo: str, directory: Path, *, stamp: str, keep: int = KEEP_BACKU
     directory.mkdir(parents=True, exist_ok=True)
     final = directory / f"changefeed-{stamp}.dump"
     partial = final.with_suffix(".partial")
-    subprocess.run(["pg_dump", "-Fc", "--exclude-table-data=raw_bodies", "-f", str(partial), "-d", conninfo],
-                   check=True)
+    try:
+        subprocess.run(["pg_dump", "-Fc", "--exclude-table-data=raw_bodies", "-f", str(partial), "-d", conninfo],
+                       check=True)
+    except BaseException:
+        partial.unlink(missing_ok=True)  # a full-size half dump on the disk the collector needs
+        raise
     partial.rename(final)
     for old in sorted(directory.glob("changefeed-*.dump"))[:-keep]:
         old.unlink()

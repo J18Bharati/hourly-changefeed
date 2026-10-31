@@ -24,6 +24,7 @@ def _parser() -> argparse.ArgumentParser:
     em.add_argument("--out", type=Path, default=Path.home() / ".local/share/hourly-changefeed/changes")
     ld = sub.add_parser("load", help="consumer: load new change files into CHANGEFEED_CONSUMER_DB")
     ld.add_argument("--dir", type=Path, default=Path.home() / ".local/share/hourly-changefeed/changes")
+    ld.add_argument("--verify", action="store_true", help="re-check every manifest already loaded, not just new ones")
     sub.add_parser("report", help="consumer: fill rates, freshness and missed hours")
     cs = sub.add_parser("consumer-setup", help="create the loader's role and database (run as a superuser)")
     cs.add_argument("--consumer-db", default="changefeed_consumer")
@@ -54,20 +55,28 @@ def main(argv: list[str] | None = None) -> int:
         args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
     except SystemExit as e:  # argparse has printed usage (or --help) already
         return 1 if e.code else 0
+    if args.cmd in ("load", "report") and not os.environ.get("CHANGEFEED_CONSUMER_DB"):
+        # Never fall back to libpq's defaults, which may well name the producer.
+        print("set CHANGEFEED_CONSUMER_DB to the consumer database", file=sys.stderr)
+        return 1
     if args.cmd == "load":
         try:
-            print(f"loaded {load.load(os.environ.get('CHANGEFEED_CONSUMER_DB', ''), args.dir)} hours")
+            print(f"loaded {load.load(os.environ['CHANGEFEED_CONSUMER_DB'], args.dir, verify=args.verify)} hours")
         except load.LoadError as e:
             print(f"refused: {e}", file=sys.stderr)
             return 1
         return 0
     if args.cmd == "report":
-        with psycopg.connect(os.environ.get("CHANGEFEED_CONSUMER_DB", ""), options="-c timezone=UTC") as conn:
+        with psycopg.connect(os.environ["CHANGEFEED_CONSUMER_DB"], options="-c timezone=UTC") as conn:
             print(reports.render(conn))
         return 0
     with psycopg.connect(os.environ.get("CHANGEFEED_DB", ""), autocommit=True) as conn:
         if args.cmd == "consumer-setup":
-            load.provision(conn, consumer_db=args.consumer_db, producer_db=conn.info.dbname, role=args.role)
+            try:
+                load.provision(conn, consumer_db=args.consumer_db, producer_db=conn.info.dbname, role=args.role)
+            except load.LoadError as e:
+                print(f"refused: {e}", file=sys.stderr)
+                return 1
             print(f"{args.consumer_db} owned by {args.role}, which cannot connect to {conn.info.dbname}")
             return 0
         if args.cmd == "migrate":
@@ -77,13 +86,19 @@ def main(argv: list[str] | None = None) -> int:
         db.migrate(conn)
     if args.cmd in ("run", "run-hour"):
         conninfo = os.environ.get("CHANGEFEED_DB", "")
-        result = collect.run(conninfo) if args.cmd == "run" else collect.run_hour(conninfo)
+        if args.cmd == "run":
+            # Under the run lock like the timer's run, so emit never writes an hour this run is still adding to.
+            with psycopg.connect(conninfo, autocommit=True) as lock:
+                held = lock.execute("SELECT pg_try_advisory_lock(%s)", (collect.RUN_LOCK,)).fetchone()[0]
+                result = collect.run(conninfo) if held else None
+        else:
+            result = collect.run_hour(conninfo)
         if result is None:
             print("another run holds the lock; nothing to do")
             return 0
         counts = ", ".join(f"{k}: {v}" for k, v in sorted(result.counts.items())) or "nothing due"
         print(f"run {result.id}: {result.status} ({counts})")
-        return 1 if result.status == "missed" else 0
+        return 2 if result.status == "missed" else 0  # 2: the unit's SuccessExitStatus, so emit still runs
     conninfo = os.environ.get("CHANGEFEED_DB", "")
     if args.cmd in ("health", "status", "maintain"):
         with psycopg.connect(conninfo, autocommit=True) as conn:
@@ -105,6 +120,11 @@ def main(argv: list[str] | None = None) -> int:
         print(ops.backup(conninfo, args.dir, stamp=stamp))
         return 0
     if args.cmd == "rebuild-versions":
+        with psycopg.connect(conninfo) as conn:
+            if conn.execute("SELECT EXISTS (SELECT 1 FROM emitted_hours)").fetchone()[0]:
+                print("refused: hours are already emitted, and a rebuild would rewrite the history in "
+                      "them without the consumer knowing", file=sys.stderr)
+                return 1
         with psycopg.connect(os.environ.get("CHANGEFEED_DB", ""), autocommit=True) as conn:
             conn.execute("SELECT pg_advisory_lock(%s)", (collect.RUN_LOCK,))  # never during a run
             boards = [args.board] if args.board else [b for (b,) in conn.execute("SELECT id FROM boards ORDER BY id")]

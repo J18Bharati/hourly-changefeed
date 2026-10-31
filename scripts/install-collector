@@ -8,6 +8,13 @@ data="$HOME/.local/share/hourly-changefeed"
 sock="$data/pgdata/sock"
 mkdir -p "$state" "$data" "$HOME/.config/systemd/user"
 
+# Never swap builds under a running hour: the unit's three steps would run two different versions.
+# A running oneshot is 'activating' (is-active says no), so wait on ActiveState. The trap restarts
+# the timer however this script ends; a failed deploy must not stop collection.
+systemctl --user stop changefeed.timer 2>/dev/null || true
+trap 'systemctl --user start changefeed.timer 2>/dev/null || true' EXIT
+while case $(systemctl --user show -P ActiveState changefeed.service) in
+        activating|deactivating|active|reloading) true ;; *) false ;; esac; do sleep 5; done
 nix build "$repo#default" --out-link "$state/result"
 nix build "$repo#postgres" --out-link "$state/postgres"
 PATH="$state/postgres/bin:$PATH" PGDATA="$data/pgdata" "$repo/scripts/pg-init"

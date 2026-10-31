@@ -103,7 +103,7 @@ def test_an_hour_already_loaded_cannot_be_replaced(consumer, files):
     m = json.loads(first.read_bytes())
     first.write_bytes(emit._dumps({**m, "collection": {"runs": 2, "missed": None}}))
     with pytest.raises(load.LoadError, match="already loaded"):
-        load.load(consumer, files)
+        load.load(consumer, files, verify=True)
 
 
 def test_a_row_count_that_disagrees_with_the_file_is_refused(consumer, files):
@@ -143,5 +143,6 @@ def test_load_command(consumer, files, monkeypatch, capsys):
     assert cli.main(["load", "--dir", str(files)]) == 0
     assert "loaded 3 hours" in capsys.readouterr().out
     files.joinpath(manifests(files)[0].relative_to(files)).write_bytes(b"{}")
-    assert cli.main(["load", "--dir", str(files)]) == 1
+    assert cli.main(["load", "--dir", str(files)]) == 0, "the hourly load does not re-read loaded hours"
+    assert cli.main(["load", "--dir", str(files), "--verify"]) == 1
     assert "refused" in capsys.readouterr().err

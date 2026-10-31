@@ -7,6 +7,9 @@ After=changefeed-postgres.service
 Type=oneshot
 Environment="CHANGEFEED_DB=host=%h/.local/share/hourly-changefeed/pgdata/sock dbname=changefeed"
 Environment="CHANGEFEED_CONSUMER_DB=host=%h/.local/share/hourly-changefeed/pgdata/sock dbname=changefeed_consumer user=changefeed_loader"
+# A missed run (low disk) exits 2, which still lets emit and load run: the hours before it need
+# their change files. Any other failure fails the unit.
+SuccessExitStatus=2
 ExecStart=%h/.local/state/changefeed/result/bin/changefeed run-hour
 # Then write the change files for every hour that has finished (at least the previous one).
 ExecStart=%h/.local/state/changefeed/result/bin/changefeed emit

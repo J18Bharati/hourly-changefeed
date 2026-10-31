@@ -80,11 +80,14 @@ def test_emitting_again_is_a_no_op_and_re_emitting_gives_identical_bytes(conn, d
     assert {f: (other / f).read_bytes() for f in files(other)} == first
 
 
-def test_an_open_run_holds_back_its_hour(conn, dbname, world, tmp_path):
-    # Started 55 minutes ago and still going: it may yet commit versions recorded in hour -1.
+def test_an_open_run_holds_back_its_hour(conn, dbname, world, top, tmp_path):
+    # Started at the very end of hour -1 and still going: it may yet commit versions recorded in that
+    # hour. Not "55 minutes ago" (the current hour for the last 5 minutes of every hour), nor "50 minutes
+    # before the hour" (over an hour old after :10, so emit closes it as crashed).
     conn.execute("""UPDATE collection_runs SET status = 'running', finished_at = NULL,
-                    started_at = now() - interval '55 minutes' WHERE id = %s""", (world[1],))
+                    started_at = %s WHERE id = %s""", (top - timedelta(microseconds=1), world[1]))
     assert emit.emit(f"dbname={dbname}", tmp_path) == 2
+    assert not (tmp_path / (top - timedelta(hours=1)).astimezone(emit.UTC).strftime("%Y/%m/%d/%H.jsonl")).exists()
 
 
 def test_a_crashed_run_is_closed_rather_than_blocking_forever(conn, dbname, world, tmp_path):
