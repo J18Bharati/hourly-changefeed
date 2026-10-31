@@ -1,8 +1,8 @@
 """Leased claims and backoff.
 
 Copied from andrefetch-gator @ ebdaff9 (src/gator/poller/sched.py), with feeds renamed to boards.
-A success schedules the board one poll_interval minus SLACK out, so it is due again at the next
-hourly run however late in this one it was fetched.
+A success makes the board due at the top of the next interval (date_trunc to the hour, plus
+poll_interval), so the next hourly run fetches it however late in the hour this run was.
 
 A claim is a short transaction: lock due, unleased boards with SKIP LOCKED, stamp a lease and a
 fresh claim token, commit. The fetch then runs with no transaction open. Completion happens in
@@ -20,7 +20,6 @@ import psycopg
 MIN_BACKOFF = timedelta(minutes=1)
 MAX_BACKOFF = timedelta(hours=24)
 MAX_FAILURES = 10
-SLACK = timedelta(minutes=10)
 
 
 class LeaseLost(Exception):
@@ -90,9 +89,9 @@ def finish(conn: psycopg.Connection, claim: Claim, *, ok: bool,
         raise LeaseLost(f"board {claim.board_id}: lease expired and the board was claimed again")
     if ok:
         conn.execute("""
-            UPDATE boards SET next_fetch_at = now() + poll_interval - %s, last_attempt_at = now(),
+            UPDATE boards SET next_fetch_at = date_trunc('hour', now()) + poll_interval, last_attempt_at = now(),
                              consecutive_failures = 0, claimed_until = NULL, claim_token = NULL
-            WHERE id = %s""", (SLACK, claim.board_id))
+            WHERE id = %s""", (claim.board_id,))
         return
     failures = row[0] + 1
     disabled = f"{failures} consecutive failures, last: {error}" if failures >= MAX_FAILURES else None

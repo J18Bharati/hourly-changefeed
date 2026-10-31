@@ -212,3 +212,12 @@ def test_due_boards_are_claimed_once_across_workers(conn, connect, board):
         theirs = sched.claim_due(b, 20, collect.LEASE)
     assert len(mine) == 12 and len(theirs) == 8
     assert not {c.board_id for c in mine} & {c.board_id for c in theirs}
+
+
+def test_a_success_is_due_again_at_the_top_of_the_next_hour(conn, api, board):
+    # Live, 2026-11-01: a run at 02:42 scheduled boards for 03:32 (an hour minus 10 minutes), so the
+    # 03:00 timer run found nothing due and that hour was lost.
+    api.routes["/greenhouse/acme"] = Reply(200, gh((1, "A", T1)))
+    bid = board()
+    poll(conn, bid)
+    assert conn.execute("SELECT next_fetch_at = date_trunc('hour', now()) + interval '1 hour' FROM boards").fetchone()[0]
