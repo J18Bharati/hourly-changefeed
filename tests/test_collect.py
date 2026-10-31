@@ -220,4 +220,4 @@ def test_a_success_is_due_again_at_the_top_of_the_next_hour(conn, api, board):
     api.routes["/greenhouse/acme"] = Reply(200, gh((1, "A", T1)))
     bid = board()
     poll(conn, bid)
-    assert conn.execute("SELECT next_fetch_at = date_trunc('hour', now()) + interval '1 hour' FROM boards").fetchone()[0]
+    assert conn.execute("SELECT next_fetch_at = date_trunc('hour', now(), 'UTC') + interval '1 hour' FROM boards").fetchone()[0]

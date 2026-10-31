@@ -83,8 +83,8 @@ def emit(conninfo: str, out: Path) -> int:
         conn.execute("""UPDATE collection_runs SET status = 'partial', reason = 'did not finish', finished_at = now()
                         WHERE status = 'running' AND started_at < now() - interval '1 hour'""")
         limit, start, prev = conn.execute("""
-            SELECT least(date_trunc('hour', now()),
-                         (SELECT date_trunc('hour', min(started_at)) FROM collection_runs WHERE status = 'running')),
+            SELECT least(date_trunc('hour', now(), 'UTC'),
+                         (SELECT date_trunc('hour', min(started_at), 'UTC') FROM collection_runs WHERE status = 'running')),
                    coalesce((SELECT max(hour) + interval '1 hour' FROM emitted_hours),
                             (SELECT min(hour) FROM collection_runs)),
                    (SELECT manifest_sha256 FROM emitted_hours ORDER BY hour DESC LIMIT 1)""").fetchone()

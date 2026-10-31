@@ -10,7 +10,7 @@ from changefeed import emit
 
 @pytest.fixture
 def top(conn):
-    return conn.execute("SELECT date_trunc('hour', now())").fetchone()[0]
+    return conn.execute("SELECT date_trunc('hour', now(), 'UTC')").fetchone()[0]
 
 
 @pytest.fixture

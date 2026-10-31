@@ -208,7 +208,7 @@ def record_missed(conn) -> int:
         INSERT INTO collection_runs (hour, started_at, finished_at, status, reason)
         SELECT h, h, h, 'missed', 'no run'
         FROM generate_series((SELECT max(hour) FROM collection_runs) + interval '1 hour',
-                             date_trunc('hour', now()) - interval '1 hour', interval '1 hour') AS h""").rowcount
+                             date_trunc('hour', now(), 'UTC') - interval '1 hour', interval '1 hour') AS h""").rowcount
 
 
 def run_hour(conninfo: str) -> Run | None:

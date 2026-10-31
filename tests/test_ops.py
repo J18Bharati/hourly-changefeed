@@ -52,7 +52,7 @@ def test_status_flags_repeated_stale_dead_tokens_and_missed_hours(conn, bid):
     for i in range(3):
         fetched(conn, bid, "stale", ago=timedelta(hours=i), error="posting 1 went back")
         fetched(conn, dead, "http_error", ago=timedelta(hours=i), error="HTTP 404")
-    conn.execute("INSERT INTO collection_runs (hour, status, reason) VALUES (date_trunc('hour', now()) - interval '5 hours', 'missed', 'no run')")
+    conn.execute("INSERT INTO collection_runs (hour, status, reason) VALUES (date_trunc('hour', now(), 'UTC') - interval '5 hours', 'missed', 'no run')")
     text = ops.status(conn)
     assert "greenhouse/acme: 3 stale replies in 24 h" in text
     assert "lever/gone: 3 consecutive 404s" in text

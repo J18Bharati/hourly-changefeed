@@ -1,7 +1,7 @@
 """Leased claims and backoff.
 
 Copied from andrefetch-gator @ ebdaff9 (src/gator/poller/sched.py), with feeds renamed to boards.
-A success makes the board due at the top of the next interval (date_trunc to the hour, plus
+A success makes the board due at the top of the next interval (date_trunc to the UTC hour, plus
 poll_interval), so the next hourly run fetches it however late in the hour this run was.
 
 A claim is a short transaction: lock due, unleased boards with SKIP LOCKED, stamp a lease and a
@@ -89,7 +89,7 @@ def finish(conn: psycopg.Connection, claim: Claim, *, ok: bool,
         raise LeaseLost(f"board {claim.board_id}: lease expired and the board was claimed again")
     if ok:
         conn.execute("""
-            UPDATE boards SET next_fetch_at = date_trunc('hour', now()) + poll_interval, last_attempt_at = now(),
+            UPDATE boards SET next_fetch_at = date_trunc('hour', now(), 'UTC') + poll_interval, last_attempt_at = now(),
                              consecutive_failures = 0, claimed_until = NULL, claim_token = NULL
             WHERE id = %s""", (claim.board_id,))
         return

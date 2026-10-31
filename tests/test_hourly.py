@@ -6,12 +6,12 @@ from changefeed import cli, collect
 
 
 def hours(conn):
-    return conn.execute("""SELECT extract(epoch FROM date_trunc('hour', now()) - hour)::int / 3600, status, reason
+    return conn.execute("""SELECT extract(epoch FROM date_trunc('hour', now(), 'UTC') - hour)::int / 3600, status, reason
                            FROM collection_runs ORDER BY hour""").fetchall()
 
 
 def test_hours_with_no_run_are_recorded_as_missed(conn):
-    conn.execute("INSERT INTO collection_runs (hour, status) VALUES (date_trunc('hour', now()) - interval '4 hours', 'ok')")
+    conn.execute("INSERT INTO collection_runs (hour, status) VALUES (date_trunc('hour', now(), 'UTC') - interval '4 hours', 'ok')")
     assert collect.record_missed(conn) == 3
     assert hours(conn) == [(4, "ok", None), (3, "missed", "no run"), (2, "missed", "no run"), (1, "missed", "no run")]
     assert collect.record_missed(conn) == 0, "idempotent"
@@ -27,7 +27,7 @@ def test_a_run_records_its_hour(conn, dbname):
 
 
 def test_run_hour_fills_gaps_then_runs(conn, dbname):
-    conn.execute("INSERT INTO collection_runs (hour, status) VALUES (date_trunc('hour', now()) - interval '2 hours', 'ok')")
+    conn.execute("INSERT INTO collection_runs (hour, status) VALUES (date_trunc('hour', now(), 'UTC') - interval '2 hours', 'ok')")
     assert collect.run_hour(f"dbname={dbname}").status == "ok"
     assert [h for h, *_ in hours(conn)] == [2, 1, 0]
 
