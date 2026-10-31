@@ -9,7 +9,7 @@ from pathlib import Path
 
 import psycopg
 
-from changefeed import collect, db, ops, registry, versions
+from changefeed import collect, db, emit, ops, registry, versions
 from changefeed.adapters import ADAPTERS
 
 
@@ -19,6 +19,8 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("migrate", help="apply pending schema migrations")
     sub.add_parser("run", help="fetch every due board once")
     sub.add_parser("run-hour", help="what the timer runs: record missed hours, then run, under a lock")
+    em = sub.add_parser("emit", help="write the change file and manifest for every finished hour")
+    em.add_argument("--out", type=Path, default=Path.home() / ".local/share/hourly-changefeed/changes")
     sub.add_parser("health", help="exit 1 unless some board was fetched successfully in the last 2 hours")
     sub.add_parser("status", help="runs, outcomes, churn, and boards or postings that need a look")
     sub.add_parser("maintain", help="prune raw bodies older than 14 days and record today's sizes")
@@ -73,6 +75,9 @@ def main(argv: list[str] | None = None) -> int:
             r = ops.report(conn, ops.prune(conn))
             print(", ".join(f"{k} {v}" for k, v in r.items()))
             return 0
+    if args.cmd == "emit":
+        print(f"emitted {emit.emit(conninfo, args.out)} hours")
+        return 0
     if args.cmd == "backup":
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%MZ")
         print(ops.backup(conninfo, args.dir, stamp=stamp))

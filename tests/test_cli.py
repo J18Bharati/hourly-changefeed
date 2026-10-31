@@ -47,3 +47,9 @@ def test_rebuild_versions_waits_for_a_running_collector(dbname, connect, monkeyp
     holder.execute("SELECT pg_advisory_unlock(%s)", (collect.RUN_LOCK,))
     t.join(5)
     assert done.is_set() and "rebuilt 0 boards" in capsys.readouterr().out
+
+
+def test_emit_command(dbname, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("CHANGEFEED_DB", f"dbname={dbname}")
+    assert cli.main(["emit", "--out", str(tmp_path)]) == 0
+    assert "emitted 0 hours" in capsys.readouterr().out
