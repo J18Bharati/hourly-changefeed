@@ -2,7 +2,7 @@
 
 Polls the public job-board APIs of Greenhouse, Lever and Ashby every hour for about 200 companies, keeps every field of every posting versioned (when it was true, and when we learned it), and publishes one JSONL change file per hour that a second database loads idempotently.
 
-**Status:** M0 (scaffold). The plan, milestone by milestone, is in the portfolio plan; this README gets its measured numbers as milestones land.
+**Status:** M2: adapters for the three APIs and a registry of 201 validated boards (`registry/boards.tsv`). The plan, milestone by milestone, is in the portfolio plan; this README gets its measured numbers as milestones land.
 
 ## Run
 

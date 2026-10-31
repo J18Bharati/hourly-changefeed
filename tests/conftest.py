@@ -77,3 +77,70 @@ def connect(dbname):
         c.close()
 
 
+
+# --- scripted HTTP server (copied from andrefetch-gator @ ebdaff9 tests/conftest.py) ---
+
+import threading
+from dataclasses import dataclass, field
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+@dataclass
+class Reply:
+    status: int = 200
+    body: bytes = b""
+    headers: dict = field(default_factory=dict)
+
+
+class FeedServer:
+    """Serves scripted replies per path and records every request it gets.
+
+    `routes[path]` is a Reply, a list of Replies (served in turn, the last one repeating),
+    or a callable taking the request headers and returning a Reply.
+    """
+
+    def __init__(self):
+        self.routes = {}
+        self.requests = []
+        server = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                server.requests.append((self.path, dict(self.headers)))
+                reply = server._reply(self.path, self.headers)
+                self.send_response(reply.status)
+                for k, v in reply.headers.items():
+                    self.send_header(k, v)
+                self.send_header("Content-Length", str(len(reply.body)))
+                self.end_headers()
+                self.wfile.write(reply.body)
+
+            def log_message(self, *args):
+                pass
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.base = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+        threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
+
+    def _reply(self, path, headers):
+        route = self.routes.get(path)
+        if route is None:
+            return Reply(404, b"not found")
+        if callable(route):
+            return route(headers)
+        if isinstance(route, list):
+            return route.pop(0) if len(route) > 1 else route[0]
+        return route
+
+    def url(self, path):
+        return self.base + path
+
+    def hits(self, path):
+        return [h for p, h in self.requests if p == path]
+
+
+@pytest.fixture
+def server():
+    s = FeedServer()
+    yield s
+    s.httpd.shutdown()

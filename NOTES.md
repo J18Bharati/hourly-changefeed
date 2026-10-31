@@ -9,3 +9,17 @@ Recorded with curl against one board each; the headers are in `tests/fixtures/RE
 - **Only Greenhouse gives a count** (`meta.total`), and it matched the list (41 = 41). The adapter treats a mismatch as a parse error.
 - **Lever has no update time** at all, only `createdAt`. A Lever posting edited in place has no source timestamp for when, so its valid time will be the time we observed the change (`valid_from_source = 'observed'`).
 - **Error shapes:** Greenhouse 404 is JSON `{"status":404,"error":"Job not found"}`; Lever 404 is `{"ok":false,"error":"Document not found"}`; Ashby 404 is `text/plain` `Not Found`. Served with a 200, each would fail the adapter's shape check rather than read as an empty board. Two Lever tokens (`mistral`, `whoop`) answered 200 `[]`: real but empty boards, or abandoned ones. M2's `seed validate` drops boards with no postings.
+
+## 2026-11-01: seeding the registry (M2)
+
+380 candidates sampled from Riley-Dorrington/job-board-aggregator's token lists (two seeds, see `registry/NOTICE`), each fetched once, at most 2 at a time per API. 6 workers took 1 m 49 s for the first 230.
+
+| Source | Sampled | Active | 404 | Empty board | Parse or fetch error |
+|---|---|---|---|---|---|
+| greenhouse | 170 | 98 | 60 | 12 | 0 |
+| lever | 110 | 35 | 65 | 10 | 0 |
+| ashby | 100 | 68 | 25 | 7 | 0 |
+
+- **Number that looked wrong: Lever kept only 32%.** In the first batch 37 of 60 Lever tokens were 404, against 37 of 110 for Greenhouse and 19 of 60 for Ashby. The source list is an accumulation of every token its scraper has ever seen, and Lever tokens die (companies leaving Lever, or renaming the board) without the list forgetting them. So the registry over-represents Greenhouse and Ashby relative to the published list; any per-ATS comparison later must say so.
+- **No adapter failures on 201 live boards**, beyond the 3 fixtures they were written against.
+- **One full sweep is 58.4 MB uncompressed.** Medians are about 10 postings per board; the largest board is 3.8 MB (Ashby). That's the number to watch against disk in M3/M5b: it's the cost per hour if every board changed, before dedupe by body hash and lz4.
