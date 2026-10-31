@@ -21,7 +21,7 @@ import psycopg
 from psycopg import errors
 from psycopg.types.json import Jsonb
 
-from changefeed import sched
+from changefeed import adapters, sched, versions
 from changefeed.adapters import ADAPTERS, Board, ShapeError, parse_board
 from changefeed.fetch import FetchError, FetchRefused, fetch, parse_retry_after
 
@@ -70,9 +70,11 @@ def _complete(conn, claim, run_id, started, outcome, *, ok, resp=None, keep=Fals
         with conn.transaction():
             sched.finish(conn, claim, ok=ok, retry_after=log.get("retry_after"), error=log.get("error"))
             body_hash = _keep_body(conn, claim.board_id, resp.body) if keep else None
-            _log(conn, claim, run_id, started, outcome, resp=resp, body_hash=body_hash, **log)
+            log_id = _log(conn, claim, run_id, started, outcome, resp=resp, body_hash=body_hash, **log)
             if store:
-                store()
+                written = store(log_id)
+                if written is not None:
+                    conn.execute("UPDATE fetch_log SET versions = %s WHERE id = %s", (written, log_id))
     except sched.LeaseLost as e:
         try:
             with conn.transaction():
@@ -108,15 +110,17 @@ def _rollback_has_held(conn, claim) -> bool:
     return count >= n and conn.execute("SELECT %s <= now() - %s", (since, held)).fetchone()[0]
 
 
-def store_postings(conn, board_id, board: Board) -> int:
-    """Make postings_current hold this body's postings. (M4 adds absence and per-field versions.)"""
-    for p in board.postings:
-        conn.execute("""
-            INSERT INTO postings_current (board_id, external_id, fields, source_ts) VALUES (%s, %s, %s, %s)
-            ON CONFLICT (board_id, external_id) DO UPDATE
-                SET fields = excluded.fields, source_ts = excluded.source_ts, last_seen_at = now()""",
-            (board_id, p.external_id, Jsonb(p.fields), p.source_ts))
-    return len(board.postings)
+def store_postings(conn, board_id, board: Board, run_id=None, log_id=None) -> int:
+    """Version an accepted body (inside the store transaction). Returns versions written."""
+    nv = conn.execute("SELECT normalizer_version FROM boards WHERE id = %s", (board_id,)).fetchone()[0]
+    if nv is not None and nv != adapters.NORMALIZER_VERSION:
+        versions.rebaseline(conn, board_id, before_log_id=log_id)
+    conn.execute("UPDATE boards SET normalizer_version = %s WHERE id = %s", (adapters.NORMALIZER_VERSION, board_id))
+    return versions.apply_body(conn, board_id, board, recorded_at=_now(conn), run_id=run_id, log_id=log_id)
+
+
+def _now(conn):
+    return conn.execute("SELECT now()").fetchone()[0]
 
 
 def process(conn: psycopg.Connection, claim: sched.Claim, run_id=None) -> str:
@@ -151,14 +155,18 @@ def _process(conn, claim, run_id, started) -> str:
                                           last_fetched_at = now() WHERE id = %s""",
                      (resp.headers.get("etag"), new_hash, claim.board_id))
 
+    def again(log_id):  # a 304 or the same bytes: the same postings, seen once more
+        seen()
+        return versions.apply_repeat(conn, claim.board_id, recorded_at=_now(conn), run_id=run_id, log_id=log_id)
+
     if resp.status == 304:
-        return done("not_modified", ok=True, store=seen)
+        return done("not_modified", ok=True, store=again)
     if not 200 <= resp.status < 300:
         return done("http_error", ok=False, error=f"HTTP {resp.status}",
                     retry_after=parse_retry_after(resp.headers.get("retry-after"), now=db_now))
     body_hash = hashlib.sha256(resp.body).hexdigest()
     if body_hash == last_hash:
-        return done("unchanged", ok=True, keep=True, store=seen)
+        return done("unchanged", ok=True, keep=True, store=again)
     try:
         board = parse_board(claim.source, resp.body)
     except ShapeError as e:
@@ -169,9 +177,9 @@ def _process(conn, claim, run_id, started) -> str:
     first = conn.execute("SELECT NOT EXISTS (SELECT 1 FROM fetch_log WHERE board_id = %s AND outcome = 'ok')",
                          (claim.board_id,)).fetchone()[0]
 
-    def store():
-        store_postings(conn, claim.board_id, board)
+    def store(log_id):
         seen(body_hash)
+        return store_postings(conn, claim.board_id, board, run_id, log_id)
     return done("ok", ok=True, keep=True, store=store, postings=len(board.postings), baseline=first)
 
 

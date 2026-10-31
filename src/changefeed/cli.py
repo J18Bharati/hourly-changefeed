@@ -8,7 +8,7 @@ from pathlib import Path
 
 import psycopg
 
-from changefeed import collect, db, registry
+from changefeed import collect, db, registry, versions
 from changefeed.adapters import ADAPTERS
 
 
@@ -18,6 +18,8 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("migrate", help="apply pending schema migrations")
     sub.add_parser("run", help="fetch every due board once")
     sub.add_parser("run-hour", help="what the timer runs: record missed hours, then run, under a lock")
+    rb = sub.add_parser("rebuild-versions", help="replay every board's history from its raw bodies")
+    rb.add_argument("--board", type=int, help="only this board id")
     seed = sub.add_parser("seed", help="manage the board registry").add_subparsers(dest="seed_cmd", required=True)
     imp = seed.add_parser("import", help="add candidate boards from a JSON list of tokens")
     imp.add_argument("source", choices=sorted(ADAPTERS))
@@ -52,6 +54,16 @@ def main(argv: list[str] | None = None) -> int:
         counts = ", ".join(f"{k}: {v}" for k, v in sorted(result.counts.items())) or "nothing due"
         print(f"run {result.id}: {result.status} ({counts})")
         return 1 if result.status == "missed" else 0
+    if args.cmd == "rebuild-versions":
+        with psycopg.connect(os.environ.get("CHANGEFEED_DB", ""), autocommit=True) as conn:
+            conn.execute("SELECT pg_advisory_lock(%s)", (collect.RUN_LOCK,))  # never during a run
+            boards = [args.board] if args.board else [b for (b,) in conn.execute("SELECT id FROM boards ORDER BY id")]
+            total = 0
+            for board_id in boards:
+                with conn.transaction():
+                    total += versions.rebuild(conn, board_id)
+        print(f"rebuilt {len(boards)} boards: {total} versions")
+        return 0
     with psycopg.connect(os.environ.get("CHANGEFEED_DB", ""), autocommit=True) as conn:
         match args.seed_cmd:
             case "import":
