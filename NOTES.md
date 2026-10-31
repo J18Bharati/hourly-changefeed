@@ -84,3 +84,35 @@ Four runs on the dev database, about 25 minutes apart in total.
   - Freshness is measured only on non-baseline rows with a source valid time. A first sighting's source time is the posting's creation, which says how old the posting is, not how late we were.
   - So freshness is in practice a Greenhouse-only number; Lever and Ashby edits are 'observed' and have zero lag by construction.
   - **Deviation:** stale tokens stay in the producer's `status`. The change files carry versions, not fetch outcomes, so the consumer cannot see a 404.
+
+## 2026-11-01: /review of the whole repo, weighted to part B
+
+- **Who reviewed:**
+  - six specialists: testing, maintainability, security, performance, data migration, simplification;
+  - a red team and a Claude adversarial pass;
+  - after the fixes, one adversarial re-review of the fix diff, plus my own pass over the second round.
+
+  Codex was not installed, so there was no outside model. 22 regression tests were added; each failed before its fix.
+- **Numbers that looked wrong, found by the reviewers:**
+  - **A DST change would drop an hour from the feed without breaking the chain.** psycopg returns timestamps in the session's zone, and `hour += 1h` on a zoned datetime is wall-clock arithmetic. In New York, 01:00 EDT + 1 h = 02:00 EST, which is 05:00Z → 07:00Z. It is latent here, since IST has no DST, but it would go live with any time zone change. Hours now step in UTC.
+  - **`OnCalendar=hourly` is local time**, so in IST the timer fired at :30 UTC, half way through the hours the files are cut on. It is now pinned to `*:00:00 UTC`.
+  - **The first fix for one test was itself flaky.** `test_an_open_run_holds_back_its_hour` started its run "55 minutes ago", which falls in the current hour for 5 minutes of every hour. The replacement, "50 minutes before the hour", is more than an hour old after :10, so emit closes it as crashed. It now starts 1 µs before the hour.
+  - **A NUL in one posting would have disabled its whole board.** jsonb refuses `\u0000` and lone surrogates, so the store transaction would crash every hour until the auto-disable. The adapters now drop both. No stored value changes, because none could have contained them.
+- **Format 2.** Manifests now carry each board's last fetch outcome per hour. Without that, a board that stopped being fetched (404s, backoff) looked exactly like one that stopped changing, and its postings read as open forever. The consumer keeps `board_observations`, and reports leave out and name boards with no fresh fetch in 24 h. The loader still reads format 1.
+- **History already published is now guarded and checked.**
+  - `rebuild-versions` is refused once hours are emitted.
+  - `changefeed run` takes the run lock.
+  - `status` recounts each emitted hour and alerts if its rows changed: a clock stepping back after wake, a writer outside the lock, a rebuild.
+  - `health` fails if change files fall more than 2 h behind.
+- **Migration 0008 had two flaws, with no live effect.**
+  - It floored `next_fetch_at` even for boards in backoff, which pulls a Retry-After earlier.
+  - It ignored `emitted_hours`.
+
+  Checked live: 0 boards had ever failed, there were 0 missed rows, and the one emitted :30 row had been removed by hand. 0008 is applied and checksummed, so it stays as is. emit now refuses to continue a chain from an off-hour row.
+- **Not fixed, and known:**
+  - The hash chain is unkeyed. It detects corruption and reordering, not a forger who can write the changes directory.
+  - With trust auth, the loader role prevents mistakes, not a hostile local user.
+  - Change files are not in the nightly backup, and nothing re-emits them; a restore makes the consumer refuse the rewritten hours.
+- **Live after deploy:** the timer fired on reload, then run 4 (201 not modified), `emitted 1 hours`, `loaded 1 hours`.
+  - Hour 21:00 UTC is 46,415 rows over 201 boards.
+  - Its data sha256 equals the misdated `20.jsonl` from before the UTC fix: every version was recorded between 21:12 and 21:30 UTC, inside both windows, so the same rows gave the same bytes under different code.
