@@ -2,7 +2,7 @@
 
 Polls the public job-board APIs of Greenhouse, Lever and Ashby every hour for about 200 companies, keeps every field of every posting versioned (when it was true, and when we learned it), and publishes one JSONL change file per hour that a second database loads idempotently.
 
-**Status:** M3: adapters, a registry of 201 validated boards (`registry/boards.tsv`), and `changefeed run`, which fetches every due board with per-API workers, logs each attempt, keeps raw bodies (lz4, 5.8×) and refuses stale copies. The collector has run hourly as a systemd user timer since 2026-11-01 (M5a). The plan, milestone by milestone, is in the portfolio plan; this README gets its measured numbers as milestones land.
+**Status:** M3: adapters, a registry of 201 validated boards (`registry/boards.tsv`), and `changefeed run`, which fetches every due board with per-API workers, logs each attempt, keeps raw bodies (lz4, 5.8×) and refuses stale copies. The collector has run hourly as a systemd user timer since 2026-11-01 (M5a). M4 versions every field with valid and recorded time; `postings_as_of(valid, known)` answers "as it stood" vs "as it stands", and `rebuild-versions` replays history from raw bodies. The plan, milestone by milestone, is in the portfolio plan; this README gets its measured numbers as milestones land.
 
 ## Run
 

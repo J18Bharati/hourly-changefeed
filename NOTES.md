@@ -48,3 +48,11 @@ Four runs on the dev database, about 25 minutes apart in total.
 - First run, started by hand through the service at 02:42 IST: 201 ok in 39 s.
 - **`systemd-analyze verify` caught a no-op in the plan:** `RuntimeMaxSec=` has no effect on a `Type=oneshot` service, so the 50-minute guard against a hung run would never have fired. A oneshot's whole run is its start phase, so the limit is `TimeoutStartSec=50min`. `tests/test_units.py` now runs the verifier over `deploy/systemd/` and fails on any warning about our units.
 - From here `fetch_log`, `raw_bodies` and `postings_current` grow every hour. M4's versioning engine is developed against that stored history: it can rebuild from raw bodies, so nothing collected before M4 is lost.
+
+## 2026-11-01: versioning (M4), and an hour the timer lost
+
+- **The 03:00 run fetched nothing.** The manual run at 02:42 scheduled each board for "an hour from now, minus 10 minutes of slack" = 03:32, so at 03:00 nothing was due. Any run finishing more than 10 minutes past the hour (a manual run, or a run on wake) made the next hourly run skip. A success is now due at the top of the next hour (`date_trunc('hour', now()) + poll_interval`), with a test named for the incident. `collection_runs` recorded that run honestly: `ok`, counts `{}`.
+- **Backfill.** M4 was deployed on top of 201 boards' worth of raw bodies collected before versioning existed. `rebuild-versions` replayed them: 46,415 versions, 4,653 open postings, the same numbers on the dev database. All first sightings take their valid time from the source (`published_at`, `updated_at`, `createdAt`).
+- **The test that paid for itself:** re-baselining after a normaliser change first read "the board's latest accepted body", which by then was the body being stored, so the re-baseline absorbed that fetch's real change. It now reads the latest body *before* this fetch.
+- **Nulls aren't versioned on first sight** (a missing version means null), which saved about 40% of rows; a later change *to* null is still a version. Empty lists (`departments: []`) are values and are versioned.
+- **Property tests**, over 50 seeded random histories: `as_of(t, t)` equals the state held right after the fetch at t, and valid time only moves forward and never passes recorded time. Making the engine version only `title` fails 25 of them.
