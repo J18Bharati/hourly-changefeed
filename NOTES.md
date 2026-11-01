@@ -140,3 +140,8 @@ Four runs on the dev database, about 25 minutes apart in total.
 - **It cleared:** the 13:31 run was fine, and health was ok again.
 - **Fix:** the unit's `ExecStartPre` waits up to 60 s for `boards-api.greenhouse.io` to resolve. It exits 0 either way, so a real outage is still fetched and recorded as network errors. `tests/test_units.py` runs that command with a host that never resolves and with `localhost`.
 - **Not caused by the `/nix` move:** that move happened during the sleep window, with the timer stopped by the move script.
+
+## 2026-11-01: the DNS wait, tested by a real wake
+
+- The laptop suspended at 13:56 IST, 1 minute after a reboot, and woke at 17:47. Hours 09:00, 10:00 and 11:00 UTC are recorded as `missed: no run`. Together with the morning's sleep, that makes 5 of the first 16 hours missed (`changefeed report`).
+- The catch-up run started at 17:47:01, at wake, as the morning's had. This time the `ExecStartPre` DNS wait held it. The result was run 18: 200 `not_modified` and 1 `http_error`, with no DNS failures. It then emitted and loaded the 4 finished hours.
