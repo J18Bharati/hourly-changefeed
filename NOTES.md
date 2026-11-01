@@ -129,3 +129,14 @@ Four runs on the dev database, about 25 minutes apart in total.
   - **Local boundary.** initdb leaves `pgdata` at 0700, and the trust-auth socket lives inside it, so no other OS user can reach the cluster. `changes/` and `backups/` are 0775, but group `zero` has no other members.
 - **Hardening, not a finding:** `status` prints posting external ids and board tokens without `reports._printable`. Ids come from the ATS (companies don't choose them), so only a hostile or compromised ATS could put terminal escapes there.
 - **Not covered:** dependency advisories (no scanner profile ran), CI (none exists), and the four gzip test fixtures (withheld by the helper).
+
+## 2026-11-01: a laptop sleep, and a catch-up run that beat the Wi-Fi
+
+- **What health showed:** `UNHEALTHY: last success 3.5 h ago` at 13:00 IST.
+- **What happened:**
+  - The laptop slept from 09:31 to 12:34. Hours 10:30 and 11:30 IST are recorded as `missed: no run`, which is how they should be recorded.
+  - On wake, `Persistent=true` started run 13 at 12:34:48. NetworkManager reported `CONNECTED_GLOBAL` at 12:34:55.
+  - So every one of the 201 fetches failed with `ConnectError: [Errno -3] Temporary failure in name resolution`, and that hour got no data.
+- **It cleared:** the 13:31 run was fine, and health was ok again.
+- **Fix:** the unit's `ExecStartPre` waits up to 60 s for `boards-api.greenhouse.io` to resolve. It exits 0 either way, so a real outage is still fetched and recorded as network errors. `tests/test_units.py` runs that command with a host that never resolves and with `localhost`.
+- **Not caused by the `/nix` move:** that move happened during the sleep window, with the timer stopped by the move script.

@@ -10,6 +10,10 @@ Environment="CHANGEFEED_CONSUMER_DB=host=%h/.local/share/hourly-changefeed/pgdat
 # A missed run (low disk) exits 2, which still lets emit and load run: the hours before it need
 # their change files. Any other failure fails the unit.
 SuccessExitStatus=2
+# After a laptop wakes, Persistent=true starts the catch-up run at once, before Wi-Fi is back:
+# on 2026-11-01 run 13 fetched 4 s too early and every board got a DNS error. Wait up to 60 s
+# for the API hosts to resolve. Exit 0 either way, so a real outage is still recorded as one.
+ExecStartPre=/bin/sh -c 'for i in $$(seq 60); do getent hosts boards-api.greenhouse.io >/dev/null && exit 0; sleep 1; done; exit 0'
 ExecStart=%h/.local/state/changefeed/result/bin/changefeed run-hour
 # Then write the change files for every hour that has finished (at least the previous one).
 ExecStart=%h/.local/state/changefeed/result/bin/changefeed emit
