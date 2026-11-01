@@ -145,3 +145,17 @@ Four runs on the dev database, about 25 minutes apart in total.
 
 - The laptop suspended at 13:56 IST, 1 minute after a reboot, and woke at 17:47. Hours 09:00, 10:00 and 11:00 UTC are recorded as `missed: no run`. Together with the morning's sleep, that makes 5 of the first 16 hours missed (`changefeed report`).
 - The catch-up run started at 17:47:01, at wake, as the morning's had. This time the `ExecStartPre` DNS wait held it. The result was run 18: 200 `not_modified` and 1 `http_error`, with no DNS failures. It then emitted and loaded the 4 finished hours.
+
+## 2026-11-02: the look-ahead backtest (M10), a null result on 23 hours of history
+
+- **Command:** `changefeed backtest --window 0.25 --horizon 0.25 --step 0.0416667`, run on the consumer database. That is a 6 h window, a 6 h horizon and hourly points, over the loaded history: the first record is at 2026-10-31 21:12Z and the last at 2026-11-01 20:00Z. The plan's 7-day window does not fit in that history. The run took 10 s.
+- **Result:** 3,417 (board, hour) points.
+  - Summed open postings: point-in-time 79,132, hindsight 79,131, naive (latest records) 79,064.
+  - **The naive gap is 67, and it reconciles:** 16 postings that closed since (survivorship) plus 51 open postings with no `published_at`, which a naive series cannot place in time.
+  - **All 16 survivorship postings are on one board, `greenhouse/braineffectjobs`.** So the survivorship rate across the whole feed is 0.02%.
+  - 1 late deletion and 0 late additions. Over hours, the feed learns almost nothing late.
+- **Forward test:** 2,211 pairs. The correlation of each signal with the change in open postings over the next 6 h is −0.00 for both. Only 15 new postings opened inside any window, and the two signals agree at every point. **That is a null result.**
+  - **Why it is null:** almost every posting was first seen in a board's baseline fetch, with its valid time in the past. In one day, very little opens or closes.
+  - Survivorship bias grows with how long a posting can close before "now". With 23 hours of history, and points that cover only the 17 h after the first window, that time is short.
+- **What would change it:** weeks of history. `test_survivorship_matches_the_synthetic_truth` and the summary test check the method on a seeded 42-day history, in which the bias is clearly visible: naive < hindsight, and survivorship > 0.
+- **Not corrected for:** a board that stops being fetched keeps its postings open, in this query as in every `as_of` query.

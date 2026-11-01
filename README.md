@@ -2,14 +2,14 @@
 
 **An hourly change feed of about 4,650 job postings at 201 companies.** Every field of every posting is versioned with when it was true (valid time) and when we learned it (recorded time). The feed is published as one hash-chained JSONL file per UTC hour, which a second database loads idempotently and can query "as it was known then".
 
-It polls the public job-board APIs of Greenhouse, Lever and Ashby. It has run hourly on a laptop as a systemd user timer since 2026-11-01. Python 3, psycopg 3 and raw SQL, Postgres 17, Nix. No containers. 205 tests, all against a real Postgres.
+It polls the public job-board APIs of Greenhouse, Lever and Ashby. It has run hourly on a laptop as a systemd user timer since 2026-11-01. Python 3, psycopg 3 and raw SQL, Postgres 17, Nix. No containers. 212 tests, all against a real Postgres.
 
 ## Run
 
 ```sh
 nix develop
 ./scripts/pg-init && ./scripts/pg-start
-uv run pytest                          # 205 tests, each on its own database cloned from a migrated template
+uv run pytest                          # 212 tests, each on its own database cloned from a migrated template
 ./scripts/pg-stop
 ```
 
@@ -61,6 +61,20 @@ Each hour the timer runs `run-hour` (fetch every due board), then `emit` (write 
 
 **Freshness** (from a source's edit time to our recorded time) has data on only 3 boards so far: p50 of 9, 33 and 59 minutes. Lever gives no update time at all, and Ashby only a publish time, so most edits are timed by observation and have no measurable lag. In practice this is a Greenhouse metric.
 
+**Look-ahead backtest** (`changefeed backtest`, consumer side). For each board and time t it computes a hiring signal three ways:
+- **point-in-time:** what the feed knew at t;
+- **hindsight:** what was true at t, as known now;
+- **naive:** postings open now whose `published_at` is at or before t. This is what a backtest built on a latest snapshot sees.
+
+It then splits the gap into survivorship (open at t, closed since), late deletions and late additions. Last, it correlates each signal with the change in open postings over the following horizon.
+
+On 2026-11-02, with 23 h of history (6 h window, 6 h horizon, hourly points), it found 3,417 points:
+- naive is 67 below hindsight, out of 79,131 open. 16 of those are survivorship and 51 are postings with no publish date.
+- all 16 survivorship postings are on one board.
+- both correlations are −0.00 over 2,211 pairs.
+
+**That is a null result.** One day is too short for postings to close, and almost every posting entered in a baseline fetch. The method itself is tested on a seeded 42-day synthetic history.
+
 ## Numbers that looked wrong
 
 Full write-ups, with the queries, are in [`NOTES.md`](NOTES.md).
@@ -78,7 +92,7 @@ Full write-ups, with the queries, are in [`NOTES.md`](NOTES.md).
 - **The hash chain is unkeyed.** It catches corruption, gaps and reordering, not a forger who can write the changes directory.
 - **The cluster uses trust auth on a private socket.** The loader's role keeps its code away from the producer, but doesn't stop a hostile local user.
 - **Change files aren't backed up.** The nightly `pg_dump` leaves them out.
-- **M10, a look-ahead backtest** (a hiring-velocity signal on latest records versus point-in-time records), needs weeks of history first.
+- **The backtest has too little history to say much yet** (see below).
 
 ## Provenance
 

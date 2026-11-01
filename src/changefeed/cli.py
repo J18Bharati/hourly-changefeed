@@ -5,12 +5,12 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import psycopg
 
-from changefeed import collect, db, emit, load, ops, registry, reports, versions
+from changefeed import backtest, collect, db, emit, load, ops, registry, reports, versions
 from changefeed.adapters import ADAPTERS
 
 
@@ -26,6 +26,10 @@ def _parser() -> argparse.ArgumentParser:
     ld.add_argument("--dir", type=Path, default=Path.home() / ".local/share/hourly-changefeed/changes")
     ld.add_argument("--verify", action="store_true", help="re-check every manifest already loaded, not just new ones")
     sub.add_parser("report", help="consumer: fill rates, freshness and missed hours")
+    bt = sub.add_parser("backtest", help="consumer: point-in-time against latest-records hiring signals")
+    bt.add_argument("--window", type=float, default=7, help="days of new postings that make the signal")
+    bt.add_argument("--horizon", type=float, default=7, help="days ahead the signal is checked against")
+    bt.add_argument("--step", type=float, default=1, help="days between points")
     cs = sub.add_parser("consumer-setup", help="create the loader's role and database (run as a superuser)")
     cs.add_argument("--consumer-db", default="changefeed_consumer")
     cs.add_argument("--role", default="changefeed_loader")
@@ -55,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
         args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
     except SystemExit as e:  # argparse has printed usage (or --help) already
         return 1 if e.code else 0
-    if args.cmd in ("load", "report") and not os.environ.get("CHANGEFEED_CONSUMER_DB"):
+    if args.cmd in ("load", "report", "backtest") and not os.environ.get("CHANGEFEED_CONSUMER_DB"):
         # Never fall back to libpq's defaults, which may well name the producer.
         print("set CHANGEFEED_CONSUMER_DB to the consumer database", file=sys.stderr)
         return 1
@@ -69,6 +73,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "report":
         with psycopg.connect(os.environ["CHANGEFEED_CONSUMER_DB"], options="-c timezone=UTC") as conn:
             print(reports.render(conn))
+        return 0
+    if args.cmd == "backtest":
+        with psycopg.connect(os.environ["CHANGEFEED_CONSUMER_DB"], options="-c timezone=UTC") as conn:
+            first, latest = backtest.first_record(conn), backtest.last_record(conn)
+            if first is None:
+                print("nothing loaded yet", file=sys.stderr)
+                return 1
+            window, day = timedelta(days=args.window), timedelta(days=1)
+            start = first + window
+            s = backtest.run(conn, start=start, end=latest, step=day * args.step, window=window,
+                             horizon=day * args.horizon, latest=latest)
+            print(backtest.render(s))
         return 0
     with psycopg.connect(os.environ.get("CHANGEFEED_DB", ""), autocommit=True) as conn:
         if args.cmd == "consumer-setup":
