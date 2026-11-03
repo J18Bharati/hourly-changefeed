@@ -1,5 +1,5 @@
-# Copied from andrefetch-gator @ ebdaff9 (src/gator/db.py); the lock key and package name differ,
-# and the package is a parameter so the consumer database (load.py) has its own migrations.
+# Adapted from my Python rebuild of andrefetch/gator (https://github.com/andrefetch/gator, a Go
+# project); the lock key and package name differ, and the package is a parameter so the consumer database (load.py) has its own migrations.
 """Schema migrations: numbered SQL files applied once each, in order, under an advisory lock.
 
 A migration that was applied and later edited is refused rather than silently skipped.

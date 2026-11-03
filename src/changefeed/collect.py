@@ -1,6 +1,7 @@
 """Fetch boards: one claimed board at a time, many at once, every attempt logged.
 
-The per-board cycle is adapted from andrefetch-gator @ ebdaff9 (src/gator/poller/poll.py): the fetch
+The per-board cycle is adapted from my Python rebuild of andrefetch/gator (https://github.com/andrefetch/gator, a Go
+project): the fetch
 runs with no transaction open, and everything after it commits in one transaction per board that
 first checks the claim token, so one board failing never undoes another.
 

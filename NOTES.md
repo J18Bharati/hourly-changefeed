@@ -4,7 +4,7 @@
 
 Recorded with curl against one board each; the headers are in `tests/fixtures/README.md`.
 
-- **None of them sends `Last-Modified`.** All three send a weak `ETag`. So the plan's first stale test (a `Last-Modified` that goes backwards, which caught the danluu.com replicas in gator) has nothing to compare here. The stale check has to come from the bodies: the newest per-posting source time (Greenhouse `updated_at`, Lever `createdAt`, Ashby `publishedAt`).
+- **None of them sends `Last-Modified`.** All three send a weak `ETag`. So the project plan's first stale test (a `Last-Modified` that goes backwards, which caught the danluu.com replicas in my gator rebuild) has nothing to compare here. The stale check has to come from the bodies: the newest per-posting source time (Greenhouse `updated_at`, Lever `createdAt`, Ashby `publishedAt`).
 - **Ashby is served from Cloudflare's cache** (`cf-cache-status: HIT`, `cache-control: public, max-age=60, stale-while-revalidate=60`). A fetch can get a copy up to about 2 minutes old by design. With hourly polling that's harmless on its own, but it's the setup in which gator saw history run backwards, so M3 logs `CF-Cache-Status` and `Age` per fetch.
 - **Only Greenhouse gives a count** (`meta.total`), and it matched the list (41 = 41). The adapter treats a mismatch as a parse error.
 - **Lever has no update time** at all, only `createdAt`. A Lever posting edited in place has no source timestamp for when, so its valid time will be the time we observed the change (`valid_from_source = 'observed'`).
@@ -39,14 +39,14 @@ Four runs on the dev database, about 25 minutes apart in total.
   - **Lever does the work before it says 304.** Median 1.4 s for a 304 against 2.1 s for a full 200, worst 28 s. Its weak ETags (`W/"len-hash"`, the Express style) are computed from the rendered body, so a 304 saves bandwidth but not Lever's time, or ours.
   - **My worker pool made it worse.** 6 shared workers with a 2-per-API semaphore: a worker that claimed a Lever board blocked on the semaphore, so up to 4 workers sat waiting on Lever while Greenhouse and Ashby boards were due. Now each API gets its own 2 workers, which claim only that API's boards. The same all-304 run took 24 s.
 - **The exit criterion passed trivially.** It asks for every board fetched twice, with any repeat whose normalised form differs treated as a normaliser bug. All 201 repeats were byte-identical, so nothing could differ. Re-parsing all 201 stored bodies twice gave identical results (4,653 postings). The real test is hourly data, which M4 is built against.
-- **Stale rule, changed from the plan.** The plan said a copy is stale when the board's newest source timestamp goes backwards. But closing the newest posting does exactly that, and the board would read as stale until someone posted a newer job (`test_closing_the_newest_posting_is_not_stale` fails under the plan's rule). Instead, a copy is stale when a posting present in both copies has an older source timestamp. Lever and Ashby only give a creation or publish time, so this can only catch lagging copies on Greenhouse; for the other two, M4's rule that a posting is closed only after 2 agreeing fetches is the defence.
+- **Stale rule, changed from the project plan.** The project plan said a copy is stale when the board's newest source timestamp goes backwards. But closing the newest posting does exactly that, and the board would read as stale until someone posted a newer job (`test_closing_the_newest_posting_is_not_stale` fails under the project plan's rule). Instead, a copy is stale when a posting present in both copies has an older source timestamp. Lever and Ashby only give a creation or publish time, so this can only catch lagging copies on Greenhouse; for the other two, M4's rule that a posting is closed only after 2 agreeing fetches is the defence.
 - **Raw bodies compress 5.8× with lz4:** 58.4 MB of bodies take 10 MB in `raw_bodies`. If every board changed every hour for 14 days that would be 3.4 GB; M5b reports the real rate.
 
 ## 2026-11-01: the collector is live (M5a)
 
 - Installed with `scripts/install-collector`: Postgres 17 as `changefeed-postgres.service` (`Type=notify`; the nixpkgs build links libsystemd), the hourly `changefeed.timer` (`Persistent=true`), and linger on (`loginctl enable-linger` worked without sudo here). Data: `~/.local/share/hourly-changefeed/pgdata`.
 - First run, started by hand through the service at 02:42 IST: 201 ok in 39 s.
-- **`systemd-analyze verify` caught a no-op in the plan:** `RuntimeMaxSec=` has no effect on a `Type=oneshot` service, so the 50-minute guard against a hung run would never have fired. A oneshot's whole run is its start phase, so the limit is `TimeoutStartSec=50min`. `tests/test_units.py` now runs the verifier over `deploy/systemd/` and fails on any warning about our units.
+- **`systemd-analyze verify` caught a no-op in the project plan:** `RuntimeMaxSec=` has no effect on a `Type=oneshot` service, so the 50-minute guard against a hung run would never have fired. A oneshot's whole run is its start phase, so the limit is `TimeoutStartSec=50min`. `tests/test_units.py` now runs the verifier over `deploy/systemd/` and fails on any warning about our units.
 - From here `fetch_log`, `raw_bodies` and `postings_current` grow every hour. M4's versioning engine is developed against that stored history: it can rebuild from raw bodies, so nothing collected before M4 is lost.
 
 ## 2026-11-01: versioning (M4), and an hour the timer lost
@@ -60,7 +60,7 @@ Four runs on the dev database, about 25 minutes apart in total.
 ## 2026-11-01: operations (M5b), and where the bytes actually go
 
 - Live after deploy: `health` ok, `status` no alerts, the first backup (without raw bodies) is 11 MB, and the daily timer runs at 04:30.
-- **Number that looked wrong: the database is 93 MB, but raw bodies, the thing the plan worried about, are 10 MB of it.** `postings_current` is 43 MB and `posting_field_versions` 28 MB, of which `description` is 16 MB. Descriptions are stored three times over: inside the raw body (lz4), in the current row, and in the first version. jsonb in `postings_current` is TOAST-compressed with pglz by default, not lz4.
+- **Number that looked wrong: the database is 93 MB, but raw bodies, the thing the project plan worried about, are 10 MB of it.** `postings_current` is 43 MB and `posting_field_versions` 28 MB, of which `description` is 16 MB. Descriptions are stored three times over: inside the raw body (lz4), in the current row, and in the first version. jsonb in `postings_current` is TOAST-compressed with pglz by default, not lz4.
 - **So the growth to watch is edited descriptions,** each a full HTML copy in `posting_field_versions`, not raw bodies, which are deduplicated by hash and pruned after 14 days. `storage_reports.versions_24h` tracks it. If it gets large: set lz4 on the jsonb columns, or store descriptions once by hash.
 
 ## 2026-11-01: change files (M6), and hours that started at half past
@@ -117,10 +117,10 @@ Four runs on the dev database, about 25 minutes apart in total.
   - Hour 21:00 UTC is 46,415 rows over 201 boards.
   - Its data sha256 equals the misdated `20.jsonl` from before the UTC fix: every version was recorded between 21:12 and 21:30 UTC, inside both windows, so the same rows gave the same bytes under different code.
 
-## 2026-11-01: /cso (static), the network-facing paths
+## 2026-11-01: security review (static), the network-facing paths
 
-- **Result: no supported findings in what I assessed.** gstack-cso run `1793485694847-35a760c453086b63` (daily, static, 10-minute budget).
-- **The helper's saved report says `partial` with every domain `not_assessed`.** That is my error, not the code's: I called `finish` before submitting coverage, and a finished run accepts no evidence. The real coverage is below.
+- **Result: no supported findings in what I assessed.** Static review, 10-minute budget.
+- **The review tool's saved report says `partial` with every domain `not_assessed`.** That is my error, not the code's: I called `finish` before submitting coverage, and a finished run accepts no evidence. The real coverage is below.
 - **What I read, and what holds:**
   - **fetch.py.** The host allowlist is checked on every redirect hop. Only http(s) is allowed. `trust_env=False`, so no proxy comes from the environment. One Content-Encoding layer at most, inflated against a hard 64 MiB cap. A 120 s deadline covers redirects too. Retry-After is clamped to 24 h.
   - **Board tokens.** `Adapter.url` takes a regex-checked token, refuses `..`, and percent-quotes it. That covers `seed import` and every fetch. `seed load` (from the repo's TSV) inserts without the check, but every fetch goes back through `url()`.
@@ -128,7 +128,7 @@ Four runs on the dev database, about 25 minutes apart in total.
   - **ops.backup** runs `pg_dump` from an argument list, with no shell.
   - **Local boundary.** initdb leaves `pgdata` at 0700, and the trust-auth socket lives inside it, so no other OS user can reach the cluster. `changes/` and `backups/` are 0775, but group `zero` has no other members.
 - **Hardening, not a finding:** `status` prints posting external ids and board tokens without `reports._printable`. Ids come from the ATS (companies don't choose them), so only a hostile or compromised ATS could put terminal escapes there.
-- **Not covered:** dependency advisories (no scanner profile ran), CI (none exists), and the four gzip test fixtures (withheld by the helper).
+- **Not covered:** dependency advisories (no scanner profile ran), CI (none exists), and the four gzip test fixtures (withheld by the review tool).
 
 ## 2026-11-01: a laptop sleep, and a catch-up run that beat the Wi-Fi
 
@@ -139,7 +139,7 @@ Four runs on the dev database, about 25 minutes apart in total.
   - So every one of the 201 fetches failed with `ConnectError: [Errno -3] Temporary failure in name resolution`, and that hour got no data.
 - **It cleared:** the 13:31 run was fine, and health was ok again.
 - **Fix:** the unit's `ExecStartPre` waits up to 60 s for `boards-api.greenhouse.io` to resolve. It exits 0 either way, so a real outage is still fetched and recorded as network errors. `tests/test_units.py` runs that command with a host that never resolves and with `localhost`.
-- **Not caused by the `/nix` move:** that move happened during the sleep window, with the timer stopped by the move script.
+- **Not caused by the disk move:** that move happened during the sleep window, with the timer stopped by the move script.
 
 ## 2026-11-01: the DNS wait, tested by a real wake
 
@@ -148,7 +148,7 @@ Four runs on the dev database, about 25 minutes apart in total.
 
 ## 2026-11-02: the look-ahead backtest (M10), a null result on 23 hours of history
 
-- **Command:** `changefeed backtest --window 0.25 --horizon 0.25 --step 0.0416667`, run on the consumer database. That is a 6 h window, a 6 h horizon and hourly points, over the loaded history: the first record is at 2026-10-31 21:12Z and the last at 2026-11-01 20:00Z. The plan's 7-day window does not fit in that history. The run took 10 s.
+- **Command:** `changefeed backtest --window 0.25 --horizon 0.25 --step 0.0416667`, run on the consumer database. That is a 6 h window, a 6 h horizon and hourly points, over the loaded history: the first record is at 2026-10-31 21:12Z and the last at 2026-11-01 20:00Z. The project plan's 7-day window does not fit in that history. The run took 10 s.
 - **Result:** 3,417 (board, hour) points.
   - Summed open postings: point-in-time 79,132, hindsight 79,131, naive (latest records) 79,064.
   - **The naive gap is 67, and it reconciles:** 16 postings that closed since (survivorship) plus 51 open postings with no `published_at`, which a naive series cannot place in time.

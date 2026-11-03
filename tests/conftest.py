@@ -1,4 +1,5 @@
-# DB fixtures copied from andrefetch-gator @ ebdaff9 (tests/conftest.py).
+# DB fixtures adapted from my Python rebuild of andrefetch/gator (https://github.com/andrefetch/gator,
+# a Go project).
 import os
 import uuid
 
@@ -78,7 +79,7 @@ def connect(dbname):
 
 
 
-# --- scripted HTTP server (copied from andrefetch-gator @ ebdaff9 tests/conftest.py) ---
+# --- scripted HTTP server (adapted from the same source) ---
 
 import threading
 from dataclasses import dataclass, field

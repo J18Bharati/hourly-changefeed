@@ -1,6 +1,7 @@
 """Leased claims and backoff.
 
-Copied from andrefetch-gator @ ebdaff9 (src/gator/poller/sched.py), with feeds renamed to boards.
+Adapted from my Python rebuild of andrefetch/gator (https://github.com/andrefetch/gator, a Go
+project), with feeds renamed to boards.
 A success makes the board due at the top of the next interval (date_trunc to the UTC hour, plus
 poll_interval), so the next hourly run fetches it however late in the hour this run was.
 

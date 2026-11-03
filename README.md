@@ -96,4 +96,8 @@ Full write-ups, with the queries, are in [`NOTES.md`](NOTES.md).
 
 ## Provenance
 
-The migration runner, the test-database fixtures, and the fetch/claim/backoff skeleton come from my gator rebuild (`reimplemented/andrefetch-gator`). Each copied file names its source commit in its header. The board tokens were sampled from [Riley-Dorrington/job-board-aggregator](https://github.com/Riley-Dorrington/job-board-aggregator) (MIT; see `registry/NOTICE`).
+The migration runner, the test-database fixtures, and the fetch/claim/backoff skeleton are adapted from my Python rebuild of [andrefetch/gator](https://github.com/andrefetch/gator), a Go project. Each adapted file says so in its header. The board tokens were sampled from [Riley-Dorrington/job-board-aggregator](https://github.com/Riley-Dorrington/job-board-aggregator) (MIT; see `registry/NOTICE`).
+
+## Licence
+
+MIT; see `LICENSE`. The board tokens in `registry/` are under their own MIT notice in `registry/NOTICE`.

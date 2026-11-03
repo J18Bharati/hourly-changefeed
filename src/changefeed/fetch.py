@@ -1,6 +1,7 @@
 """HTTP fetching for board APIs.
 
-Copied from andrefetch-gator @ ebdaff9 (src/gator/poller/fetch.py). Changes: the public-address
+Adapted from my Python rebuild of andrefetch/gator (https://github.com/andrefetch/gator, a Go
+project). Changes: the public-address
 check is replaced by a fixed host allowlist (we only ever talk to three APIs), MAX_BYTES is
 64 MiB (the largest boards are several MB), and the User-Agent names this project.
 """

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pg-scripts v1 (source: _portfolio_ shared Postgres pattern)
+# pg-scripts v1: a small shared Postgres dev-cluster pattern used across my projects
 set -euo pipefail
 : "${PGDATA:?run inside nix develop}"
 if ! pg_ctl -D "$PGDATA" status >/dev/null 2>&1; then exit 0; fi

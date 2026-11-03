@@ -13,3 +13,5 @@ Bodies recorded from the public board APIs on 2026-10-31 (20:50 UTC), gzipped he
 | `ashby-404.txt` | token `nosuchboardxyz123` | 404, `text/plain` "Not Found" | none |
 
 The Lever fixture uses `&limit=3` to keep it small (the full board is 500 KB); the shape is the same. The collector itself never passes `limit`.
+
+Recorded from public, unauthenticated job-board APIs for testing; the job-ad text remains copyright of the respective companies.
